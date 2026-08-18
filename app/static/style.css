@@ -1,0 +1,155 @@
+:root {
+  --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
+  --blue: #3b82f6; --danger: #dc2626;
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:24px; background:var(--bg); font-family: Inter, system-ui, -apple-system, sans-serif; color:var(--text); }
+.wrap { max-width: 1280px; margin: 0 auto; }
+h1 { font-size:20px; margin:0 0 4px; }
+h1 small { font-weight: 400; color: var(--muted); font-size: 13px; }
+p.sub { margin:0 0 20px; color:var(--muted); font-size:13px; }
+.searchbar { position:relative; margin-bottom:16px; display:flex; gap:8px; }
+input[type=text], input[type=number], input[type=password], select { padding:10px 12px; font-size:14px; border:1px solid var(--border); border-radius:8px; outline:none; background:white; font-family: inherit; }
+.searchbar input[type=text] { width:100%; padding:12px 14px; font-size:15px; border-radius:10px; }
+input:focus, select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(59,130,246,0.15); }
+select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
+.autocomplete { position:relative; }
+.results { position:absolute; top:calc(100% + 4px); left:0; right:0; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.08); max-height:320px; overflow:auto; z-index:20; display:none; }
+.results.show { display:block; }
+/* Narrow fields (e.g. Path finder's Device A/B pickers, sitting alongside
+   several other fields in one row) still get a dropdown wide enough for a
+   long device/hostname to read comfortably, rather than being squeezed
+   down to the picker's own cramped width. */
+.results.wide { min-width:420px; }
+.result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; }
+.result-item:hover { background:#f8fafc; }
+/* Belt-and-suspenders for a name too long even for the widened dropdown
+   above (or any other narrow spot .results is used) -- wrap it onto a
+   second line instead of forcing the whole row into horizontal scroll.
+   min-width:0 is required for a flex item to actually be allowed to
+   shrink/wrap rather than pushing the row wider. */
+.result-item span:first-child { overflow-wrap:anywhere; min-width:0; }
+.tag { font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; white-space:nowrap; }
+.tabs { display:flex; gap:8px; margin-bottom:16px; }
+.tab-btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; color:var(--muted); }
+.tab-btn.active { background:var(--text); color:white; border-color:var(--text); }
+/* The "Device" tab's label is a live device name (can be a long FQDN) --
+   truncate instead of letting it stretch the tab row. */
+#tabDevice { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
+.device-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+.device-header h2 { margin:0; font-size:18px; }
+.spacer { flex:1; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
+td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+tr:last-child td { border-bottom:none; }
+.port-name { font-weight:600; font-family: ui-monospace, monospace; font-size:12.5px; }
+
+/* Canonical styling for every in-app "click to jump to a device" pseudo-
+   link (an <a> with an onclick and no href -- browsers give those no
+   default styling at all, unlike a real href). Put class="link" directly
+   on the <a> itself wherever one of these is built, rather than relying on
+   some ancestor's class (a table cell, a card, whatever) to happen to
+   carry the styling -- that indirection is exactly what let several of
+   these render as unstyled plain text in the past (patch panel port
+   chains, Virtual Switch/AP Group uplinks & members, the Reports tables)
+   simply because the container they were dropped into didn't have the
+   right class. One rule, applied at the source, can't go stale that way. */
+a.link { color:var(--blue); text-decoration:none; font-weight:600; cursor:pointer; }
+a.link:hover { text-decoration:underline; }
+.chain .via { color:var(--muted); font-size:11px; }
+.arrow { color:#cbd5e1; }
+.unused { color:#cbd5e1; font-style:italic; font-size:12px; }
+.device-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
+.device-chip { padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; text-align:left; max-width:100%; overflow:hidden; }
+.device-chip:hover { border-color:var(--blue); }
+.device-chip .chip-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.device-chip .role { display:block; font-weight:400; color:var(--muted); font-size:11px; margin-top:2px; }
+
+/* Long device names (FQDNs especially) shouldn't be able to force a box
+   wider than its container -- these truncate with an ellipsis (title
+   attribute on the element supplies the full-name tooltip on hover);
+   everything else just wraps mid-word rather than overflowing. */
+.autocomplete input[type=text] { text-overflow:ellipsis; overflow:hidden; }
+.device-header h2 { overflow-wrap:anywhere; }
+.chain, .path-hop-device, td, .via { overflow-wrap:anywhere; }
+.empty-state { text-align:center; color:var(--muted); padding:40px 20px; font-size:14px; }
+button.btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; color:var(--text); }
+button.btn:hover { border-color:var(--blue); color:var(--blue); }
+button.btn.primary { background:var(--text); color:white; border-color:var(--text); }
+button.btn.primary:hover { opacity:0.9; color:white; }
+button.btn.danger { color:var(--danger); }
+button.btn.danger:hover { border-color:var(--danger); }
+button.btn.small { padding:4px 10px; font-size:12px; }
+button.icon-btn { background:none; border:none; cursor:pointer; color:var(--muted); font-size:14px; padding:2px 6px; border-radius:4px; }
+button.icon-btn:hover { background:#f1f5f9; color:var(--danger); }
+.row-actions { display:flex; gap:4px; align-items:center; }
+.modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,0.4); display:flex; align-items:center; justify-content:center; z-index:100; }
+.modal { background:white; border-radius:12px; padding:24px; width:420px; max-width:90vw; max-height:85vh; overflow:auto; }
+.modal h3 { margin:0 0 16px; font-size:16px; }
+.field { margin-bottom:12px; }
+.field label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
+.field input, .field select { width:100%; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+.error-msg { background:#fef2f2; color:#b91c1c; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:12px; }
+.toast { position:fixed; bottom:20px; right:20px; background:var(--text); color:white; padding:10px 16px; border-radius:8px; font-size:13px; z-index:200; opacity:0; transition:opacity 0.2s; }
+.toast.show { opacity:1; }
+.note { color: var(--muted); font-size: 12px; font-style: italic; }
+.note a.link { font-style: normal; }
+.speed-tag { background:#e0f2fe; color:#0369a1; font-weight:600; margin-left:6px; }
+.vlan-tag { background:#fae8ff; color:#a21caf; font-weight:600; margin-left:6px; }
+.footer { margin-top:28px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; text-align:center; }
+.footer a { color:var(--muted); cursor:pointer; text-decoration:underline; }
+table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+
+.admin-only { display:none; }
+.topbar { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.account-box { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+.account-actions { display:flex; gap:6px; }
+
+.login-screen { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.login-box { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:32px; width:340px; max-width:90vw; }
+.login-box h1 { font-size:22px; text-align:center; }
+.login-box p.sub { text-align:center; }
+.login-box .field { margin-bottom:14px; }
+.login-box .field input { width:100%; }
+.checkbox-field label { display:flex; align-items:center; gap:6px; font-weight:600; color:var(--text); cursor:pointer; margin-bottom:8px; }
+.checkbox-field input[type=checkbox], .checkbox-field input[type=radio] { width:auto; flex:none; }
+
+.poe-tag { background:#fef9c3; color:#a16207; font-weight:600; margin-left:6px; }
+.poe-tag-ok { background:#dcfce7; color:#15803d; font-weight:600; margin-left:6px; }
+.poe-tag-warn { background:#fef2f2; color:#b91c1c; font-weight:600; margin-left:6px; }
+.lag-tag { background:#ede9fe; color:#6d28d9; font-weight:600; margin-left:6px; }
+
+.path-hop { padding:10px 14px; border:1px solid var(--border); border-radius:10px; background:#f8fafc; }
+.path-hop-device { font-weight:700; font-size:14px; }
+.path-hop-port { font-family: ui-monospace, monospace; font-size:12px; color:var(--muted); margin-top:2px; }
+.path-arrow { text-align:center; color:#cbd5e1; font-size:16px; padding:4px 0; }
+.path-chain { display:flex; flex-direction:column; gap:2px; margin-top:12px; }
+.path-summary { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.vlan-note { padding:8px 12px; border-radius:8px; font-size:12.5px; margin-bottom:4px; }
+.vlan-note-same { background:#dcfce7; color:#15803d; }
+.vlan-note-diff { background:#ffedd5; color:#c2410c; }
+.vlan-note-unknown { background:#f1f5f9; color:var(--muted); }
+
+/* Printing (device pages especially -- see "Print" button on a device's
+   card). Hidden on screen; @media print below both reveals this and
+   strips out everything that isn't useful on paper (nav chrome, search,
+   tabs, the "All devices" grid, and any buttons/action icons). */
+.print-meta { display:none; }
+
+@media print {
+  body { background:#fff; padding:0; }
+  .wrap { max-width:100%; }
+  .topbar, .searchbar, .tabs, .footer, #modalRoot, .toast,
+  .print-hide, button, .icon-btn, .row-actions { display:none !important; }
+  .print-meta { display:block; margin-bottom:10px; font-size:11px; color:var(--muted); }
+  .card { border:none; box-shadow:none; padding:0; margin-bottom:18px; }
+  .device-header { border-bottom:2px solid #0f172a; padding-bottom:8px; }
+  a { color:inherit !important; text-decoration:none !important; cursor:default !important; }
+  table { font-size:12px; }
+  th, td { border-bottom-color:#cbd5e1; }
+  tr, .path-hop { break-inside:avoid; }
+}

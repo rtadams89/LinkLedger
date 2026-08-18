@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkLedger — Tutorial</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  .help-wrap { max-width: 820px; margin: 0 auto; }
+  .help-wrap h2 { font-size: 15px; margin: 28px 0 8px; }
+  .help-wrap h3 { font-size: 13.5px; margin: 20px 0 6px; }
+  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: #1e293b; }
+  .help-wrap ul, .help-wrap ol { padding-left: 20px; margin: 6px 0; }
+  .help-wrap code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .back-link { display:inline-block; margin-bottom: 16px; font-size: 13px; }
+
+  .part-banner { display:flex; align-items:center; gap:10px; background:var(--text); color:white;
+    padding:10px 16px; border-radius:10px; margin:34px 0 6px; font-size:14px; font-weight:700; }
+  .part-banner:first-of-type { margin-top: 8px; }
+  .part-banner .part-label { background:rgba(255,255,255,0.18); padding:2px 9px; border-radius:999px;
+    font-size:11px; letter-spacing:0.04em; text-transform:uppercase; }
+  .part-intro { font-size:13.5px; color:var(--muted); margin:0 0 18px; }
+
+  .tut-toc { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin: 16px 0 8px; }
+  .tut-toc strong { font-size:13px; }
+  .tut-toc ol { columns: 2; -webkit-columns:2; margin:8px 0 0; padding-left:18px; }
+  .tut-toc li { font-size:12.5px; margin-bottom:4px; }
+  .tut-toc a { color:var(--blue); text-decoration:none; }
+  .tut-toc a:hover { text-decoration:underline; }
+
+  figure.shot { margin: 10px 0 18px; }
+  figure.shot img { max-width:100%; border:1px solid var(--border); border-radius:10px;
+    box-shadow:0 2px 10px rgba(15,23,42,0.06); display:block; }
+  figure.shot figcaption { font-size:12px; color:var(--muted); margin-top:6px; font-style:italic; }
+
+  .callout { border-radius:10px; padding:12px 16px; font-size:13px; margin:14px 0; }
+  .callout.tip { background:#eff6ff; color:#1e40af; }
+  .callout.note { background:#f1f5f9; color:#334155; }
+  .callout.warn { background:#fffbeb; color:#92400e; }
+  .callout strong { display:block; margin-bottom:2px; }
+
+  .sample-cta { display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--border);
+    border-radius:12px; padding:18px 20px; margin: 20px 0; flex-wrap:wrap; }
+  .sample-cta .txt { flex:1; min-width:220px; }
+  .sample-cta h3 { margin:0 0 4px; font-size:14px; }
+  .sample-cta p { margin:0; font-size:12.5px; color:var(--muted); }
+
+  .top-jump { position:sticky; top:8px; float:right; font-size:11px; }
+</style>
+</head>
+<body>
+<div class="wrap help-wrap">
+  <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <h1>LinkLedger <small>tutorial</small></h1>
+  <p class="sub">A hands-on walkthrough, from first login to every feature, using a
+  made-up example network — none of this is your real data.</p>
+
+  <div class="sample-cta">
+    <div class="txt">
+      <h3>Follow along with sample data</h3>
+      <p>Every screenshot on this page comes from the same small example network —
+      a home office, a garage, and about twenty devices in between. Download it as a
+      LinkLedger backup and restore it (Settings &rarr; Restore, admin only) into a
+      spare instance, or your own after you've backed up your real data, to click
+      through everything shown here yourself.</p>
+    </div>
+    <a class="btn primary" href="/static/tutorial/linkledger-sample-data.zip" download>&darr; Download sample-data.zip</a>
+  </div>
+
+  <div class="tut-toc">
+    <strong>On this page</strong>
+    <ol>
+      <li><a href="#qs-signin">Quick Start: Signing in</a></li>
+      <li><a href="#qs-browse">Quick Start: Browsing &amp; search</a></li>
+      <li><a href="#qs-device">Quick Start: Reading a device page</a></li>
+      <li><a href="#qs-add-device">Quick Start: Adding a device</a></li>
+      <li><a href="#qs-add-port">Quick Start: Adding ports</a></li>
+      <li><a href="#qs-cable">Quick Start: Cabling two ports</a></li>
+      <li><a href="#qs-edit">Quick Start: Editing things</a></li>
+      <li><a href="#qs-next">Quick Start: What's next</a></li>
+      <li><a href="#cg-move">Complete: Moving a cable in one step</a></li>
+      <li><a href="#cg-patch">Complete: Patch panels</a></li>
+      <li><a href="#cg-virtual">Complete: AP Groups &amp; Virtual Switches</a></li>
+      <li><a href="#cg-lag">Complete: LAGs</a></li>
+      <li><a href="#cg-poe">Complete: PoE tracking</a></li>
+      <li><a href="#cg-path">Complete: Path finder</a></li>
+      <li><a href="#cg-reports">Complete: Reports</a></li>
+      <li><a href="#cg-filter">Complete: Filtering the browse grid</a></li>
+      <li><a href="#cg-print">Complete: Printing a device page</a></li>
+      <li><a href="#cg-settings">Complete: Settings, accounts &amp; backups</a></li>
+      <li><a href="#cg-clear">Complete: Clearing connections, or clearing everything</a></li>
+      <li><a href="#cg-edge">Complete: Edge cases worth knowing about</a></li>
+    </ol>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PART 1: QUICK START                                          -->
+  <!-- ============================================================ -->
+  <div class="part-banner"><span class="part-label">Part 1</span> Quick Start — up and running in a few minutes</div>
+  <p class="part-intro">The core loop you'll use almost every time: find a device,
+  look at what's plugged into it, add something new, wire it up. This part covers
+  the handful of actions that make up most day-to-day use.</p>
+
+  <h2 id="qs-signin">Signing in</h2>
+  <p>Open LinkLedger in a browser and you'll land on the sign-in screen. Enter the
+  admin username and the default password documented in the README (this is the
+  <em>only</em> place that default lives — LinkLedger no longer takes passwords
+  from environment variables).</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/01-login.png" alt="LinkLedger sign-in screen">
+    <figcaption>The sign-in screen — username and password, nothing else.</figcaption>
+  </figure>
+  <p>The very first time you sign in as admin with the default password still in
+  place, a reminder appears. It'll keep appearing on every login until you actually
+  change the password from Settings — this page is exactly what it points you to.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/02-password-reminder.png" alt="Reminder modal to change the default admin password">
+    <figcaption>The default-password reminder. "Remind me later" just closes it for this
+    session — it comes back next login until the password is actually changed.</figcaption>
+  </figure>
+  <div class="callout tip">
+    <strong>Do this first on a real installation</strong>
+    Sign in, go to Settings, and change the admin password before this instance is
+    reachable by anyone else. See "Settings, accounts &amp; backups" below for exactly
+    where.
+  </div>
+
+  <h2 id="qs-browse">Browsing &amp; search</h2>
+  <p>Dismiss the reminder (or change the password first, your call) and you land on
+  <strong>Browse devices</strong> — every device you've documented, as a grid of
+  cards.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/03-browse-grid.png" alt="Browse devices grid showing the example network's 21 devices">
+    <figcaption>Browse devices — the example network has 21 devices across two sites.</figcaption>
+  </figure>
+  <p>The search bar at the top matches as you type — name, role, or model. This is
+  usually faster than scrolling the grid once you know roughly what you're looking
+  for.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/04-search.png" alt="Search box with a matching result for nas.example.lan">
+    <figcaption>Typing "nas" finds nas.example.lan.</figcaption>
+  </figure>
+
+  <h2 id="qs-device">Reading a device page</h2>
+  <p>Click a device — from search or the grid — and you're on its page: every port
+  it has, and exactly what each one connects to.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/05-device-nas.png" alt="Device page for nas.example.lan showing two ports bonded into a LAG">
+    <figcaption>nas.example.lan — two 1G ports, each with its own cable to the core
+    switch, bonded together into LAG1 (more on LAGs in Part 2).</figcaption>
+  </figure>
+  <p>Each connected row reads left to right: the port, its speed and any VLAN
+  tag, then an arrow to whatever it's plugged into. If that chain passes through a
+  patch panel, you'll see every hop, not just the final destination.</p>
+
+  <h2 id="qs-add-device">Adding a device</h2>
+  <p><strong>+ Add device</strong>, top right of any page. Give it a name, pick a
+  role from the dropdown (this drives what options show up later — VLANs, PoE, and
+  so on), and optionally a model and site.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/06-add-device-modal.png" alt="Add device modal with Name, Role, Model, Site, Notes and Requires PoE fields">
+    <figcaption>Adding a device — only Name is required; everything else can be filled
+    in later.</figcaption>
+  </figure>
+  <div class="callout note">
+    <strong>Site and Role lists start empty/minimal</strong>
+    The Site dropdown only offers whatever you've added under Settings &rarr; Sites.
+    Role options can be trimmed from the full fixed list under Settings &rarr; Device
+    roles, so you're not scrolling past roles you'll never use. Both are covered in
+    "Settings, accounts &amp; backups" below.
+  </div>
+
+  <h2 id="qs-add-port">Adding ports</h2>
+  <p>From a device's page, <strong>+ Add port(s)</strong>. A single name
+  (<code>eth0</code>) creates one port; a range like <code>Port[1-8]</code> creates
+  eight at once — handy for a switch. You can set a speed that applies to the whole
+  batch.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/07-add-port-modal.png" alt="Add port(s) modal with name/range field and a speed dropdown">
+    <figcaption>Adding ports to desktop-pc.example.lan — a single name, or a
+    Port[1-8]-style range for several at once.</figcaption>
+  </figure>
+
+  <h2 id="qs-cable">Cabling two ports</h2>
+  <p>Click the link icon on any unconnected port, or use <strong>+ New cable</strong>
+  at the top of any page to pick both ends from scratch without opening either
+  device first. Search for the device, pick the port, done.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/08-new-cable-modal.png" alt="Connect port modal with From device/port and To device/port pickers">
+    <figcaption>+ New cable — pick both ends, from anywhere in the app.</figcaption>
+  </figure>
+  <div class="callout tip">
+    <strong>Physically moving a cable?</strong>
+    A port that's already connected still shows up in these pickers instead of being
+    grayed out — pick it as the new target and confirm the warning, and LinkLedger
+    disconnects the old cable and makes the new one in a single step. See "Moving a
+    cable in one step" in Part 2 below.
+  </div>
+
+  <h2 id="qs-edit">Editing things</h2>
+  <p>A pencil icon edits a device or port in place — rename, change role/model/site,
+  or (for ports) set speed, VLAN(s), or PoE. An &#10005; disconnects a cable; a trash
+  icon deletes a port or device outright (both ask for confirmation, since deleting
+  a device takes its ports and cables with it).</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/12-edit-device-modal.png" alt="Edit device modal with the same fields as Add device, pre-filled">
+    <figcaption>Editing core-switch.example.lan — the same fields as Add device, just pre-filled.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="/static/tutorial/img/13-edit-port-modal.png" alt="Edit port modal showing Name, Speed, VLAN(s), and Supplies PoE fields">
+    <figcaption>Editing a switch port — name, speed, VLAN(s), and (Switch/Router-Firewall
+    only) Supplies PoE.</figcaption>
+  </figure>
+  <p>To reassign a connected port to a new target in one step, use + New cable and
+  pick that port as either end (see the callout above). To just disconnect a port
+  without immediately reconnecting it elsewhere, use the &#10005; icon — the link
+  icon reappears in its place whenever you're ready to connect it to something new.</p>
+
+  <h2 id="qs-next">What's next</h2>
+  <p>That covers the loop you'll use constantly: find, look, add, wire up, edit.
+  Everything else — patch panels, wireless/virtual links, LAGs, PoE tracking, the
+  path finder, reports, printing, and the settings/backup pages — is in Part 2
+  below, in the same order as the example network's own more unusual corners, so
+  you can either read straight through or jump to whatever you actually need from
+  the table of contents at the top.</p>
+
+  <!-- ============================================================ -->
+  <!-- PART 2: COMPLETE GUIDE                                       -->
+  <!-- ============================================================ -->
+  <div class="part-banner"><span class="part-label">Part 2</span> Complete Guide — every feature, and the edge cases</div>
+  <p class="part-intro">Everything Quick Start didn't cover: features you'll reach
+  for less often, but that matter once your network gets more interesting than a
+  flat switch and a few clients.</p>
+
+  <h2 id="cg-move">Moving a cable in one step</h2>
+  <p>Physically moving a cable used to mean two separate actions in LinkLedger:
+  disconnect the old connection, then make the new one. As of this version, the
+  Connect port and + New cable pickers show an already-in-use port as selectable
+  instead of graying it out — its label says exactly what it's currently connected
+  to, e.g. <code>eth0 -- in use, connected to patch-panel.example.lan (port 1)</code>.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/24-connect-overwrite-picker.png" alt="New cable modal with both the From port and To port pickers showing already-in-use ports selected, each labeled with what it's currently connected to">
+    <figcaption>Both From port and To port can be picked even while already in use --
+    each one's label shows what it's currently connected to.</figcaption>
+  </figure>
+  <p>Click <strong>Connect</strong> with an occupied port picked on either end, and a
+  warning pops up naming exactly what's about to be disconnected -- something like
+  "This will disconnect the source port (currently connected to X) and replace it
+  with this new connection. Continue?" Confirm it, and the old connection is removed
+  and the new one created in a single action. Cancel it, and nothing changes.</p>
+  <p>This works identically whether one end, both ends, or neither end is currently
+  in use, and applies to wireless/virtual links the same way it applies to cables --
+  it's the fastest way to record a cable you've physically unplugged from one port
+  and plugged into another.</p>
+
+  <h2 id="cg-patch">Patch panels</h2>
+  <p>A Patch Panel device shows two columns per numbered port: the <strong>device
+  side (rear)</strong> — what's physically plugged into the back, in a wall jack —
+  and the <strong>switch side (front)</strong> — the patch cable running from the
+  front to a switch. <strong>+ Add N paired ports</strong> creates however many
+  front/rear pairs you need in one go, already linked as pass-through.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/09-patch-panel.png" alt="Patch panel device page with front/rear port pairs, three of six connected">
+    <figcaption>patch-panel.example.lan — 3 of 6 pairs in use. Port 4's rear (device)
+    side isn't cabled yet, so it shows "not connected" with just a link icon.</figcaption>
+  </figure>
+  <p>Connecting an unused rear port works the same as any other port — click its
+  link icon, choosing the actual device on the other end of that wall run.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/10-connect-port-modal.png" alt="Connect port modal opened from patch panel Port 4's device side">
+    <figcaption>Connecting Port 4's device (rear) side. Once it's cabled, the chain
+    from any device plugged into the switch side of this panel will show every hop
+    through it automatically.</figcaption>
+  </figure>
+  <p>Once both sides of a pair are connected, anything plugged into the switch side
+  traces straight through to the real device on the wall side — a connection chain
+  like <code>&rarr; patch-panel.example.lan (port 1) &rarr; desktop-pc.example.lan</code>
+  shows the whole path, not just the panel.</p>
+
+  <h2 id="cg-virtual">AP Groups &amp; Virtual Switches</h2>
+  <p>Some connections don't have one fixed physical end: a laptop associates to
+  whichever access point is best right now, and a container reaches the network
+  through its host's internal bridge, not a cable of its own. <strong>AP
+  Group</strong> and <strong>Virtual Switch</strong> are two roles for exactly
+  this — devices with no physical ports of their own, defined instead by:</p>
+  <ul>
+    <li><strong>Uplinks</strong> — real ports elsewhere that this virtual switch
+      rides on top of. Each keeps its own normal cable too.</li>
+    <li><strong>Members</strong> — ports whose only connection is this virtual
+      switch, added from the member port's own link icon by choosing "Wireless /
+      virtual link" instead of a cable.</li>
+  </ul>
+  <figure class="shot">
+    <img src="/static/tutorial/img/14-device-apgroup.png" alt="Office WiFi AP Group page listing two uplinks and three wireless members">
+    <figcaption>"Office WiFi" — an AP Group with two real access points as uplinks,
+    and three wireless clients as members.</figcaption>
+  </figure>
+  <p>From a member's own page, the connection just shows the group, with a note when
+  there's more than one possible physical path:</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/15-device-phone.png" alt="phone.example.lan page showing its wifi port connected to Office WiFi via any of 2 uplinks">
+    <figcaption>phone.example.lan's wifi port — connected to Office WiFi "via any of 2
+    uplinks", since there genuinely isn't one fixed path until Path Finder is asked
+    for a specific route (see below).</figcaption>
+  </figure>
+  <p>The same pattern models containers and VMs — a Virtual Switch stands in for a
+  Docker bridge, a Proxmox <code>vmbr</code>, or similar:</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/16-device-virtualswitch.png" alt="docker-host-bridge0 Virtual Switch page with one uplink and two container members">
+    <figcaption>"docker-host-bridge0" — a Virtual Switch uplinked to docker-host's
+    eth0, with two containers as members.</figcaption>
+  </figure>
+  <div class="callout note">
+    <strong>Chaining works too</strong>
+    A container's vNIC can itself be a Virtual Switch's uplink — e.g. a Docker
+    bridge running inside a VM. LinkLedger will trace all the way through:
+    container &rarr; the VM's bridge &rarr; the VM's vNIC &rarr; the host's own
+    bridge &rarr; the host's physical NIC &rarr; a normal cable from there.
+  </div>
+
+  <h2 id="cg-lag">LAGs (bonded links)</h2>
+  <p>When two or more of a device's own ports are bonded into one logical link — a
+  NAS with two NICs trunked together, or a switch-to-switch link over two cables —
+  <strong>+ Add LAG</strong> on that device's page groups them. Each member keeps
+  its own individual cable exactly as before; a LAG is a label on top, not a
+  replacement, so the path finder still traces each member on its own.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/18-device-nas-lag.png" alt="nas.example.lan page with LAG1 grouping eth0 and eth1">
+    <figcaption>nas.example.lan's LAG1, bonding eth0 and eth1 — the same page shown
+    in Quick Start, with the LAGs table at the bottom.</figcaption>
+  </figure>
+
+  <h2 id="cg-poe">PoE tracking</h2>
+  <p>Mark a switch/router port as <strong>Supplies PoE</strong> from its edit
+  dialog, and mark any device as <strong>Requires PoE</strong> from Add/Edit
+  device. Wherever that device's connection shows up, you'll see a green "PoE OK"
+  badge, or an amber warning if the port it's actually plugged into doesn't supply
+  power — a quick way to catch something that got moved to the wrong port.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/11-device-core-switch.png" alt="core-switch.example.lan full port table with PoE and VLAN tags across several ports, plus a LAG table">
+    <figcaption>core-switch.example.lan — PoE tags on the ports feeding the two access
+    points, VLAN tags throughout, and the LAG1 table from Quick Start's NAS example,
+    all on one device.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="/static/tutorial/img/17-device-poe-unmet.png" alt="garage-door-sensor.example.lan flagged needs PoE, not supplied">
+    <figcaption>garage-door-sensor.example.lan needs PoE but its switch port doesn't
+    supply it — exactly the kind of mismatch this is meant to catch (Reports also
+    lists these; see below).</figcaption>
+  </figure>
+
+  <h2 id="cg-path">Path finder</h2>
+  <p>Search for a source device/NIC and a destination device/NIC, and see the
+  actual path between them — every hop, which port it enters and leaves on, and
+  each segment's speed.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/19-pathfinder-result.png" alt="Path finder result from laptop's wifi to nas.example.lan's eth1, five hops, showing PoE and VLAN match">
+    <figcaption>laptop.example.lan (wifi) to nas.example.lan (eth1) — five hops
+    through Office WiFi, an access point, and the core switch, with a shared-VLAN
+    banner and a PoE tag on the access point's hop.</figcaption>
+  </figure>
+  <p>When the NIC you picked is wirelessly/virtually linked to an AP Group or
+  Virtual Switch with more than one uplink, a <strong>Via AP</strong> (or
+  <strong>Via uplink</strong>) dropdown appears next to that picker. Leave it on
+  "Best route (auto)" for the shortest path, or pin it to a specific uplink to see
+  the route as if that device were actually using it right now.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/20-pathfinder-pin.png" alt="Path finder form showing the Via AP dropdown with two office access points to choose from">
+    <figcaption>Pinning laptop.example.lan to a specific access point instead of
+    "best route" — useful when you know which AP a client is actually associated
+    to right now.</figcaption>
+  </figure>
+  <p>VLANs change <em>which kind</em> of path is searched for: same VLAN (or
+  untagged) looks for the plain shortest cabled path; two different tagged VLANs
+  requires the path to pass through a Router/Firewall, since a plain switch can't
+  legitimately bridge that. "No path found" means no such route exists — not that
+  something's broken.</p>
+
+  <h2 id="cg-reports">Reports</h2>
+  <p>A set of read-only checks for gaps in your documentation — nothing here
+  changes data, and every item links straight to the device in question.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/21-reports.png" alt="Reports tab listing devices missing a site or model, ports missing a speed, unused ports, and an unmet PoE requirement">
+    <figcaption>Reports on the example network — a couple of intentionally
+    incomplete devices (missing site/model, one port missing a speed), a few
+    unused switch ports, and the unmet-PoE device from above.</figcaption>
+  </figure>
+  <p>Checks include: devices missing a site, model, or role; site values in use
+  that aren't in your managed Sites list; ports missing a speed; ports with no
+  cable, pairing, or wireless/virtual link at all; AP Groups/Virtual Switches with
+  no uplinks; devices with no ports yet; and devices requiring PoE that aren't
+  actually getting it.</p>
+
+  <h2 id="cg-filter">Filtering the browse grid</h2>
+  <p>On Browse devices, the type dropdown above the grid filters down to one role —
+  useful once you've got more than a couple dozen devices.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/22-browse-filtered.png" alt="Browse devices grid filtered to just the Appliance role, showing 6 of 21 devices">
+    <figcaption>Filtered to just "Appliance" — 6 of the example network's 21
+    devices.</figcaption>
+  </figure>
+
+  <h2 id="cg-print">Printing a device page</h2>
+  <p>Every device page has a <strong>Print</strong> button. It opens your browser's
+  normal print dialog, but first strips out the search bar, tabs, and every button/
+  action icon, leaving just that device's name/role/model/site, its notes, and its
+  full port table on a clean page.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/23-print-preview.png" alt="Print preview of garage-switch.example.lan, showing only the port table and a printed-date line">
+    <figcaption>Print preview of garage-switch.example.lan — handy for a paper copy
+    at the rack. "Save as PDF" in the print dialog works the same as printing.</figcaption>
+  </figure>
+
+  <h2 id="cg-settings">Settings, accounts &amp; backups</h2>
+  <p>This tutorial focuses on the Browse/Device/Path finder/Reports screens shown
+  above; the Settings page (top right, admin sees the most) has its own controls
+  that aren't screenshotted here since they're mostly self-explanatory forms:</p>
+  <ul>
+    <li><strong>Change your password</strong> — do this first on any real
+      installation; see the callout in "Signing in" above.</li>
+    <li><strong>Sites</strong> and <strong>Device roles</strong> / <strong>Interface
+      speeds</strong> — manage the option lists the Add/Edit forms offer. All
+      three start minimal/empty and are non-destructive: hiding or renaming an
+      option never touches a device/port that's already using it.</li>
+    <li><strong>Viewer account password</strong> — LinkLedger's read-only account
+      gets a random password on first install that the admin never sees or needs.
+      If you want to actually use that account, set a password for it here — no
+      need to know the old one.</li>
+    <li><strong>Backup</strong> (both accounts) and <strong>Restore</strong>
+      (admin only) — the sample data linked at the top of this page is a real
+      backup .zip, produced exactly this way, so it's a good first thing to try
+      restoring.</li>
+    <li><strong>Clear all connections</strong> and <strong>Reset data</strong>
+      (admin only) — see "Clearing connections, or clearing everything" below.</li>
+  </ul>
+  <p>The <a class="link" href="/static/help.html">Help</a> page covers all of these
+  in full reference detail, including the exact CSV columns LinkLedger's backup/
+  restore format uses.</p>
+
+  <h2 id="cg-clear">Clearing connections, or clearing everything</h2>
+  <p>Settings has two increasingly destructive "start over" buttons, next to each
+  other near the bottom of the page:</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/25-settings-clear-reset.png" alt="Settings page showing the Clear all connections and Reset all data cards next to each other">
+    <figcaption>Clear all connections and Reset data -- both admin-only, both
+    irreversible, at two different scopes.</figcaption>
+  </figure>
+  <p><strong>Clear all connections</strong> permanently disconnects every cable and
+  wireless/virtual link, leaving your devices and ports themselves exactly as they
+  are. Patch-panel front/rear pairing and LAG groupings aren't affected, since those
+  describe what a port structurally is rather than what it's currently plugged into.
+  This is the quicker option when you're physically re-cabling a large part of your
+  network and would rather start the connections from a clean slate than disconnect
+  each one individually -- a single confirmation dialog spells out what's about to
+  happen before it runs.</p>
+  <p><strong>Reset data</strong> goes further: it permanently deletes every device,
+  port, and cable, and also clears your Sites list and resets Device roles /
+  Interface speeds back to their full default (everything enabled) -- a genuinely
+  blank slate to start documenting a different environment from scratch, including
+  its own picker-setting customizations, not just its topology. It asks you to type
+  "RESET" to confirm, since (like Clear all connections) it can't be undone --
+  download a backup first if there's any chance you'll want any of it back.</p>
+
+  <h2 id="cg-edge">Edge cases worth knowing about</h2>
+  <ul>
+    <li><strong>A device with an old/hidden role, site, or speed</strong> keeps its
+      existing value even after that option is hidden from new-pick dropdowns in
+      Settings — hiding only affects what's offered going forward, never existing
+      data. Reports' "site values not in your managed list" check is a quick way
+      to find these.</li>
+    <li><strong>The Internet device</strong> is a documentation-only stand-in for
+      "the public internet" — give it one port per site/ISP handoff. It doesn't
+      bridge its own ports, so Path Finder won't route "through" it from one
+      site's WAN port to another's; there isn't really one deterministic path
+      through an ISP. A real site-to-site VPN tunnel is different — model it as an
+      ordinary port-to-port cable between the two routers instead, and it's
+      automatically traversable.</li>
+    <li><strong>A device with only one port</strong> skips the "which NIC do you
+      mean" step in Path Finder automatically; a multi-port device (like the NAS
+      above) needs the specific NIC picked, since it can genuinely reach the same
+      destination two different physical ways.</li>
+    <li><strong>Restoring a partial backup</strong> only replaces what's actually
+      in the .zip — a file with just <code>ports.csv</code> leaves devices, cables,
+      and everything else untouched. See the Help page for exactly what cascades
+      (e.g. replacing devices clears their ports and cables, since they can't
+      exist without the device).</li>
+    <li><strong>Every login re-checks the default-password reminder</strong> — if
+      you dismissed it with "Remind me later" it'll simply reappear next time you
+      sign in as admin, until the password is actually changed.</li>
+  </ul>
+
+  <div class="sample-cta">
+    <div class="txt">
+      <h3>Try it yourself</h3>
+      <p>Restore the sample data into a spare (or freshly reset) instance and click
+      through everything above with your own hands.</p>
+    </div>
+    <a class="btn primary" href="/static/tutorial/linkledger-sample-data.zip" download>&darr; Download sample-data.zip</a>
+  </div>
+
+</div>
+</body>
+</html>

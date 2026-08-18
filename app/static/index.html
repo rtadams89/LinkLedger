@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkLedger — Network Connection Tracker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="loginScreen" class="login-screen" style="display:none;">
+  <div class="login-box">
+    <h1>LinkLedger</h1>
+    <p class="sub">Sign in to continue.</p>
+    <div id="loginError"></div>
+    <form id="loginForm" onsubmit="return submitLogin(event)">
+      <div class="field"><label>Username</label><input type="text" id="loginUser" autocomplete="username" autocapitalize="off" required></div>
+      <div class="field"><label>Password</label><input type="password" id="loginPass" autocomplete="current-password" required></div>
+      <button class="btn primary" type="submit" style="width:100%;">Sign in</button>
+    </form>
+  </div>
+</div>
+
+<div class="wrap" id="mainApp" style="display:none;">
+  <div class="topbar">
+    <div>
+      <h1>LinkLedger <small>network connection tracker</small></h1>
+      <p class="sub">Search a device, pick a port, see exactly what it's cabled to — through any patch panel and out the other side. Edit anything, anytime.</p>
+    </div>
+    <div class="account-box">
+      <span class="note" id="whoami"></span>
+      <div class="account-actions">
+        <button class="btn small" onclick="location.href='/static/settings.html'">Settings</button>
+        <button class="btn small" onclick="window.open('/static/help.html', '_blank')">Help</button>
+        <button class="btn small" onclick="logout()">Log out</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="searchbar">
+    <div style="position:relative; flex:1;">
+      <input type="text" id="search" placeholder="Search a device..." autocomplete="off">
+      <div class="results" id="results"></div>
+    </div>
+    <button class="btn admin-only" onclick="openConnectModal(null)">+ New cable</button>
+    <button class="btn primary admin-only" onclick="openDeviceModal()">+ Add device</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" id="tabBrowse" onclick="showTab('browse')">Browse devices</button>
+    <button class="tab-btn" id="tabDevice" style="display:none;" onclick="viewDevice(lastViewedDeviceId)">Device</button>
+    <button class="tab-btn" id="tabPath" onclick="showTab('path')">Path finder</button>
+    <button class="tab-btn" id="tabReports" onclick="showTab('reports')">Reports</button>
+  </div>
+
+  <div id="browseView"></div>
+  <div id="deviceView" style="display:none"></div>
+  <div id="pathView" style="display:none"></div>
+  <div id="reportsView" style="display:none"></div>
+
+  <footer class="footer">
+    LinkLedger v<span id="verNum">…</span> · &copy; <span id="verYear"></span> LinkLedger contributors ·
+    <a href="https://github.com/rtadams89/LinkLedger/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0</a> ·
+    <a href="https://github.com/rtadams89/LinkLedger" target="_blank" rel="noopener">Source</a> ·
+    <a onclick="window.open('/static/help.html', '_blank')">Help</a>
+  </footer>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

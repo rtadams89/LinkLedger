@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkLedger — Settings</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  .settings-wrap { max-width: 640px; margin: 0 auto; }
+  .back-link { display:inline-block; margin-bottom: 16px; font-size: 13px; }
+  .settings-section h2 { margin: 0 0 6px; font-size: 15px; }
+  .settings-section p.note { margin: 0 0 14px; }
+</style>
+</head>
+<body>
+
+<div class="wrap settings-wrap" id="settingsWrap" style="display:none;">
+  <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <h1>LinkLedger <small>settings</small></h1>
+  <p class="sub" id="whoamiLine">&nbsp;</p>
+
+  <div class="card settings-section admin-only">
+    <h2>Sites</h2>
+    <p class="note">Manage the list of sites offered on a device's Site field. Renaming a site here updates every device already set to it; deleting one just stops offering it for new picks &mdash; devices already set to a deleted site keep that value (the Reports tab flags it as no longer in this list, if you want to clean it up).</p>
+    <div id="sitesError"></div>
+    <div id="sitesList"></div>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <input type="text" id="f_newSite" placeholder="New site name" style="flex:1;">
+      <button class="btn primary" onclick="submitAddSite()">Add</button>
+    </div>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Device roles</h2>
+    <p class="note">Choose which roles show up in the Add/Edit device Role dropdown. The roles themselves aren't customizable -- some drive real behavior (path finding, VLAN/PoE options) -- but you can hide ones you'll never use. Unchecking one here doesn't touch any device that already has it set.</p>
+    <div id="rolesError"></div>
+    <div id="rolesList"></div>
+    <button class="btn primary" onclick="submitRoleSettings()" style="margin-top:10px;">Save</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Interface speeds</h2>
+    <p class="note">Choose which speeds show up in the port speed picker. Unchecking one here doesn't touch any port that already has it set &mdash; it just stops being offered for new picks.</p>
+    <div id="speedsError"></div>
+    <div id="speedsList"></div>
+    <button class="btn primary" onclick="submitSpeedSettings()" style="margin-top:10px;">Save</button>
+  </div>
+
+  <div class="card settings-section">
+    <h2>Backup</h2>
+    <p class="note">Downloads a single .zip with everything in it — devices, ports, cables, your Sites list, and your Device roles / Interface speeds picker settings — plus a small file noting when the backup was made and which LinkLedger version made it.</p>
+    <button class="btn primary" onclick="doBackup()">Download backup</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Restore</h2>
+    <p class="note">Upload a backup .zip to replace your data with what's in it. Works with a full backup or one trimmed down to just the file(s) you changed (e.g. only <code>ports.csv</code>) — anything not included is left alone. This can't be undone, so download a fresh backup first if you want to keep what's currently there.</p>
+    <div id="restoreError"></div>
+    <div class="field"><input type="file" id="f_restoreFile" accept=".zip"></div>
+    <button class="btn danger" onclick="submitRestore()">Restore from backup</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Change your password</h2>
+    <p class="note">Changes the password for the admin account (the one you're signed in as). You'll stay signed in on this device; other signed-in devices/browsers will need to sign in again.</p>
+    <div id="adminPwError"></div>
+    <div class="field"><label>Current password</label><input type="password" id="pw_current" autocomplete="current-password"></div>
+    <div class="field"><label>New password</label><input type="password" id="pw_new" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm new password</label><input type="password" id="pw_confirm" autocomplete="new-password"></div>
+    <button class="btn primary" onclick="submitChangeAdminPassword()">Change password</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Viewer account password</h2>
+    <p class="note">Sets the password for the read-only viewer account. You don't need to know its current password — this replaces it outright and signs the viewer account out everywhere.</p>
+    <div id="viewerPwError"></div>
+    <div class="field"><label>New password</label><input type="password" id="vpw_new" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm new password</label><input type="password" id="vpw_confirm" autocomplete="new-password"></div>
+    <button class="btn primary" onclick="submitSetViewerPassword()">Set viewer password</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Clear all connections</h2>
+    <p class="note">Permanently disconnects every cable and wireless/virtual link, leaving your devices and ports themselves in place — handy when you're physically re-cabling a large part of your network and would rather start the connections from a clean slate than delete them one at a time. Patch-panel front/rear pairing and LAG groupings aren't affected. This cannot be undone; download a backup first if there's any chance you'll want the connections back.</p>
+    <button class="btn danger" onclick="confirmClearConnections()">Clear all connections</button>
+  </div>
+
+  <div class="card settings-section admin-only">
+    <h2>Reset all data</h2>
+    <p class="note">Permanently deletes every device, port, and cable, and also clears your Sites list and resets Device roles / Interface speeds back to their full default (everything enabled) — a genuinely blank slate to start documenting a different environment from scratch. This cannot be undone; download a backup first if there's any chance you'll want any of it back.</p>
+    <button class="btn danger" onclick="confirmResetData()">Reset data</button>
+  </div>
+</div>
+
+<div class="wrap settings-wrap" id="notSignedIn" style="display:none;">
+  <p class="sub">You're not signed in. <a href="/">Go to LinkLedger</a> to sign in first.</p>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/static/settings.js"></script>
+</body>
+</html>

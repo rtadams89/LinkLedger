@@ -1,0 +1,27 @@
+services:
+  linkledger:
+    build: .
+    # If you'd rather not build locally and just want to try it via Portainer's
+    # "Repository" build method (pointing at a git repo containing this folder),
+    # leave `build: .` as-is and Portainer will build the image for you.
+    container_name: linkledger
+    restart: unless-stopped
+    ports:
+      - "8130:8000"
+    # No environment variables to set -- accounts are created automatically
+    # on first boot: admin gets a known default password (documented in the
+    # README -- change it from Settings after your first login, the app
+    # will keep reminding you until you do) and viewer gets a random
+    # password generated fresh for this install, which the admin can
+    # overwrite from Settings if they ever want to use that account. See
+    # the README's "Setting up accounts" section for details.
+    volumes:
+      # Kept as "patchbook_data" (this app's old name) on purpose -- it's
+      # just an internal Docker volume identifier, never shown in the UI.
+      # If you already have this volume from a Patchbook deployment,
+      # leaving the name unchanged means your existing data is reused
+      # automatically with no migration step.
+      - patchbook_data:/data
+
+volumes:
+  patchbook_data:

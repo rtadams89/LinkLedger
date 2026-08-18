@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkLedger — Help</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  .help-wrap { max-width: 760px; margin: 0 auto; }
+  .help-wrap h2 { font-size: 15px; margin: 28px 0 8px; }
+  .help-wrap h2:first-of-type { margin-top: 0; }
+  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: #1e293b; }
+  .help-wrap ul { padding-left: 20px; margin: 6px 0; }
+  .help-wrap code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .kbd-icon { display:inline-block; background:#f1f5f9; border:1px solid var(--border); border-radius:4px; padding:0 5px; font-size:12px; }
+  .back-link { display:inline-block; margin-bottom: 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap help-wrap">
+  <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <h1>LinkLedger <small>help</small></h1>
+  <p class="sub">A quick reference for finding and editing connections.</p>
+
+  <div class="card" style="margin-bottom:20px;">
+    <strong style="font-size:14px;">New here?</strong>
+    <p style="margin:6px 0 0;">This page is a plain-language reference. The
+    <a class="link" href="/static/tutorial.html">tutorial</a> is a better
+    starting point if you'd rather see it in action first -- a screenshot-by-
+    screenshot walkthrough (a quick "get up and running" part, then a
+    complete guide to every feature) built on a small made-up example
+    network you can also download and load into LinkLedger yourself to try
+    everything hands-on.</p>
+  </div>
+
+  <h2>Finding a device</h2>
+  <p>Type into the search bar at the top — it matches device name, role, or
+  model as you type. Click a result to open that device's detail view,
+  which lists every port and what it's connected to. Viewing a device
+  switches to its own <strong>Device</strong> tab, separate from Browse
+  devices -- Browse devices always shows the full grid, and the Device tab
+  always shows the last device you looked at, so you can jump back to it
+  from Path Finder or Reports without searching again. It appears the
+  first time you view a device and stays for the rest of your session.</p>
+
+  <h2>Back and forward</h2>
+  <p>The browser's own back and forward buttons (and mouse
+  back/forward, and keyboard shortcuts for them) step through your
+  LinkLedger view history -- click from Device A to Device B, hit back,
+  you're on Device A again, the same as any normal multi-page site. If you
+  back up onto a device that's since been deleted, you'll see a small
+  notice instead of a broken page, with a link back to Browse devices.</p>
+
+  <h2>Reading a connection</h2>
+  <p>Each port row shows a chain like <code>&rarr; patch-panel-01 (port 21) &rarr; sw2 (Port 14)</code> —
+  that's every hop the cable takes, including straight through a patch
+  panel, ending at the real device on the other end. A blue tag like
+  <code>1G</code> next to the chain is the connection's effective speed —
+  the slowest speed rated on either end, since that's what the link will
+  actually run at. A purple <code>VLAN</code> tag shows the VLAN(s) tagged
+  on the switch port at the far end of the chain, even if you're looking at
+  the device plugged into it rather than the switch itself.</p>
+
+  <h2>Patch panels</h2>
+  <p>A patch panel device shows two columns per numbered port: <strong>device
+  side (rear)</strong> — what's physically plugged into the back — and
+  <strong>switch side (front)</strong> — what patch cable runs from the
+  front to a switch. Each side traces through to whatever's connected,
+  the same as any other port.</p>
+
+  <h2>Adding a device</h2>
+  <p><strong>+ Add device</strong> in the top right. Give it a name, a role,
+  and optionally a model and site. The role dropdown offers a fixed set of
+  roles -- Switch, Patch Panel, Router/Firewall, Hypervisor, NAS, Client,
+  Server, Access Point, Appliance, AP Group, Virtual Switch, Internet, and
+  Other -- the roles themselves aren't user-editable (several drive real
+  behavior: path finding, VLAN/PoE options, and so on), but which of them
+  show up here IS configurable from Settings -&gt; Device roles -- see
+  "Settings" below -- so you're not scrolling past roles you'll never use.
+  A device already set to a role that's since been hidden keeps it, shown
+  as an extra option on that device. Once created, add its ports from the
+  device view -- except for AP Group and Virtual Switch, which don't have
+  physical ports of their own; see "AP Groups and Virtual Switches"
+  below.</p>
+  <p>The <strong>Site</strong> dropdown only offers whatever's in your
+  managed Sites list (Settings -&gt; Sites -- see "Settings" below); it
+  starts out empty; add your own site names there first. A device is still
+  free to have no site set at all. If a device's site was set before you
+  had a Sites list (e.g. from an older backup, a CSV import, or a site
+  that's since been renamed or removed from the list), that value is kept
+  and shown as an extra option on that device rather than getting blanked
+  -- the Reports tab's "Site values not in your managed list" check is a
+  quick way to find and clean those up if you want to.</p>
+  <p>On the <strong>Browse devices</strong> tab, use the type dropdown above
+  the device grid to filter down to just one role -- handy once you've got
+  more than a couple dozen devices.</p>
+
+  <h2>Adding ports</h2>
+  <p>From a device's page, click <strong>+ Add port(s)</strong>. Enter a
+  single name (e.g. <code>eth0</code>) or a range pattern like
+  <code>Port[1-8]</code> to create Port1 through Port8 in one go. You can
+  also set a speed that applies to every port created in that batch —
+  handy for switches where most ports share a speed. The speed dropdown
+  only shows whatever's enabled in Settings -&gt; Interface speeds -- see
+  "Settings" below -- so you're not scrolling past 25G/40G/100G on a
+  network that will never see them. A port that already has a speed set
+  which is since been hidden from that list keeps it -- hiding a speed
+  only affects what's offered for new picks, never existing data.</p>
+  <p>For patch panels, use <strong>+ Add N paired ports</strong> instead —
+  it creates however many front/rear port pairs you ask for, already
+  linked as pass-through, so you don't have to pair them by hand.</p>
+
+  <h2>Connecting two ports</h2>
+  <p>Click the &#128279; (link) icon on any unconnected port row, or use
+  <strong>+ New cable</strong> at the top of the page (next to + Add
+  device) to wire two arbitrary devices together by picking both ends
+  from scratch, without opening either device's page first. Pick the
+  destination device and port and click Connect.</p>
+  <p>A port that's already connected (to a cable, or a wireless/virtual
+  link) still shows up in the picker rather than being grayed out -- its
+  label says what it's currently connected to, e.g. <code>Port 4 -- in use,
+  connected to core-switch.example.lan (Port 7)</code>. Picking one is exactly how you
+  move a cable in one step instead of disconnecting it first: pick the new
+  target port (occupied or not) and click Connect. If either end you picked
+  is already in use, a warning pops up first, naming exactly what's about
+  to be disconnected -- confirm it and the old connection is removed and
+  the new one created in a single action. This is the fastest way to record
+  a cable you've physically moved from one port to another.</p>
+  <p>From a port's own &#128279; icon, you can also choose <strong>Wireless
+  / virtual link</strong> instead of a cable, to join an AP Group or Virtual
+  Switch device rather than plugging into a specific port -- see "AP Groups
+  and Virtual Switches" below.</p>
+
+  <h2>Editing a connection</h2>
+  <p>To reassign a connected port to a new target, use <strong>+ New
+  cable</strong> and pick that port as either end -- occupied ports are
+  selectable, so this overwrites its existing connection in one step (with
+  a warning first) rather than requiring a separate disconnect. To
+  disconnect a port without immediately reconnecting it elsewhere:</p>
+  <ul>
+    <li>Click the &#10005; icon on the connected port to remove the existing cable (or wireless/virtual link).</li>
+    <li>Click the &#128279; icon that appears in its place whenever you're ready to connect it to something new.</li>
+  </ul>
+
+  <h2>Editing a port</h2>
+  <p>Click the pencil icon on any port row to rename it, set its speed, or
+  — for ports on a Switch or Router/Firewall device, or a port that's
+  joined to an AP Group / Virtual Switch — tag it with VLAN(s), or (Switch
+  / Router-Firewall only) mark it as supplying PoE. VLANs are free text, so
+  <code>10</code> or <code>10, 20, 30</code> (for a trunk port) both work.</p>
+
+  <h2>AP Groups and Virtual Switches</h2>
+  <p>Some connections don't have one fixed cable end to point at: a laptop
+  can join Wi-Fi through whichever access point happens to be best, and a
+  VM or container reaches the network through its host's internal bridge
+  rather than a cable of its own. <strong>AP Group</strong> and
+  <strong>Virtual Switch</strong> are two roles for exactly this -- devices
+  with no physical ports of their own that bridge together:</p>
+  <ul>
+    <li><strong>Uplinks</strong> -- real ports elsewhere that this virtual
+      switch rides on top of (an access point's wired LAN port, or a
+      hypervisor's physical NIC). An uplink port keeps its own normal cable
+      too; adding it as an uplink doesn't change that, it just also marks
+      it as this virtual switch's way out to the rest of the network. Add
+      one from the AP Group / Virtual Switch device's own page -- an AP
+      Group with several member APs gets one uplink per AP.</li>
+    <li><strong>Members</strong> -- ports whose only connection is this
+      virtual switch instead of a cable (a wireless client's NIC, or a
+      VM/container's vNIC). Add one from the member port's own connect
+      icon, choosing "Wireless / virtual link" instead of a cable, same as
+      described above.</li>
+  </ul>
+  <p>Use <strong>AP Group</strong> for a set of access points serving the
+  same SSID/VLANs, and <strong>Virtual Switch</strong> for a hypervisor's
+  internal bridge (Proxmox vmbr, a Docker bridge network, etc). They work
+  identically under the hood -- the two names just make device lists and
+  role badges easier to read at a glance. A VM's vNIC can itself be the
+  uplink for another Virtual Switch (say, a Docker bridge running inside
+  that VM) -- chaining them like this is exactly how a container running
+  inside a VM gets represented: container &rarr; the VM's internal bridge
+  &rarr; the VM's vNIC &rarr; the hypervisor's internal bridge &rarr; the
+  hypervisor's physical NIC &rarr; a normal cable from there on.</p>
+  <p>A wireless client or VM/container vNIC can optionally be tagged with
+  its own VLAN, the same field a switch port uses -- there's no wire to
+  trace back to a switch for it, so this is how you record which VLAN it's
+  actually on if it matters for path finding.</p>
+  <p>On a device's connection chain, a virtual switch with exactly one
+  uplink traces straight through it, same as a cable. One with several
+  uplinks (an AP Group with more than one AP) shows "via any of N uplinks"
+  instead of picking one, since there genuinely isn't a single fixed path
+  until you ask Path Finder for a specific route between two NICs -- and
+  Path Finder lets you pin that search to one specific uplink instead of
+  its usual "whichever gives the shortest route" default; see "Path
+  finder" below.</p>
+
+  <h2>The internet, and site-to-site tunnels</h2>
+  <p>Give the internet itself a device, role <strong>Internet</strong>, with
+  one port per site/ISP handoff -- e.g. a "Site A Uplink" port cabled to
+  Site A's router's WAN port, and a "Site B Uplink" port cabled to Site B's
+  router's WAN port. This is purely documentation (the Internet role doesn't
+  bridge its own ports the way a Switch or Router/Firewall does), so path
+  finder won't route "through the internet" from one site's WAN port to the
+  other's -- there isn't really a single deterministic path through an ISP,
+  so that's intentional.</p>
+  <p>A site-to-site VPN (IPSec, WireGuard, etc.) is different -- it's a real,
+  specific point-to-point link, so model it as its own port and cable: add a
+  port on each router named for the tunnel (e.g. <code>IPSec Tunnel
+  (Site B)</code> on Site A's router, <code>IPSec Tunnel (Site A)</code> on
+  Site B's router), and cable those two ports directly to each other. Since
+  Router/Firewall devices already bridge all of their own ports together,
+  the tunnel is automatically traversable by path finder from that point on
+  -- no special handling needed.</p>
+
+  <h2>LAGs (bonded links)</h2>
+  <p>When two or more of a device's own physical ports are bonded together
+  into one logical link (a NAS with two NICs in a LAG, or a switch-to-switch
+  trunk over two cables), click <strong>+ Add LAG</strong> on that device's
+  page, name it, and pick which of its ports belong to it. Each member port
+  keeps its own individual cable exactly as before -- a LAG is a label on
+  top of that, not a replacement for it, so path finder still traces each
+  member port on its own. Ports in a LAG show a purple <code>LAG: name</code>
+  tag next to them; the device page also lists each LAG and its members
+  together, with a delete icon that ungroups them without touching the
+  ports or cables themselves.</p>
+
+  <h2>Printing a device page</h2>
+  <p>Every device page has a <strong>Print</strong> button next to Edit/
+  Delete (visible to both accounts). It opens your browser's normal print
+  dialog, but first reformats the page: the search bar, tabs, and every
+  button/action icon are hidden, leaving just that device's name/role/
+  model/site, its notes, and its full port (or uplink/member) table on a
+  clean white background, with a small "printed &lt;date&gt;" line at the
+  top. Handy for a Switch or Patch Panel's full port table when you want a
+  paper copy at the rack. This uses your browser's own print/PDF handling,
+  so "Save as PDF" in the print dialog works the same as printing to
+  paper.</p>
+
+  <h2>Deleting things</h2>
+  <p>Every add has a matching delete: the trash icon on a port removes it
+  (and any cable using it), and <strong>Delete</strong> on a device removes
+  it along with all its ports and cables. Both ask for confirmation first.</p>
+
+  <h2>Reports tab</h2>
+  <p>A set of read-only checks pointing out where your documentation might
+  be incomplete -- nothing here changes any data, and every item links
+  straight to the device in question so fixing it is one click away.
+  Currently checks for: devices missing a site, model, or role (the
+  Internet device is excluded from the site and model checks -- it's a
+  documentation-only stand-in for "the public internet," not a real piece
+  of hardware, so it was never going to have those set); site values in
+  use that aren't in your managed Sites list; ports missing a speed (patch
+  panel pass-through ports, the Internet device's ports, and wireless/
+  virtual member links are excluded, since none of those have a speed of
+  their own to set); ports with no cable, pairing, or wireless/virtual
+  link at all; AP Groups / Virtual Switches with no uplinks defined (these
+  can never actually reach the rest of the network); devices with no
+  ports yet (AP Groups and Virtual Switches are excluded here too -- they
+  use uplinks and members instead of physical ports by design, so having
+  none is their normal state); and devices marked <strong>Requires
+  PoE</strong> where nothing along any of their ports' trace actually
+  supplies it.</p>
+
+  <h2>Path finder</h2>
+  <p>Search for a device and the specific NIC to start from, then the same
+  for the destination, and see the actual physical/logical path between
+  them — every hop, which port it enters and leaves each device on, and
+  each segment's speed. Picking the NIC (not just the device) matters: a
+  device with more than one port -- say a NAS with both a LAN NIC and a
+  storage NIC -- can reach the same destination two different physical
+  ways, and the finder needs to know which one you mean rather than
+  guessing. Devices with only one port skip straight to it. Patch panels
+  pass straight through as usual, and a Router/Firewall is treated as
+  fully internally connected (any port on it can reach any other port on
+  it) since routing between networks is its whole job. An AP Group or
+  Virtual Switch bridges its uplinks and members the same way a Switch
+  bridges its own ports -- so the finder will route a wireless client
+  through whichever of an AP Group's several access points actually gives
+  the shortest path, and will trace a VM or container all the way through
+  its host(s), including a container inside a VM.</p>
+  <p>VLANs affect <em>which kind</em> of path is searched for, not whether
+  a switch shows up at all. If the two NICs you picked are on the same
+  VLAN (or either one is untagged -- VLAN tagging is optional, so most
+  ports won't have it set), the finder looks for the plain shortest cabled
+  path, same as always. But if they're on two different, explicitly
+  tagged VLANs, a Switch (or AP Group / Virtual Switch) alone can't
+  legitimately bridge that -- so the finder specifically requires the path to pass through a Router/Firewall
+  device, and picks whichever router (and whichever of its ports) gives
+  the shortest overall route. You don't need to tag every switch-to-switch
+  uplink along the way for this to work -- the finder just needs there to
+  <em>physically be</em> a router somewhere that both sides can reach. If
+  no such router-mediated path exists, you'll see "no path found" rather
+  than a route that wouldn't really work. The VLAN note above the path
+  (same VLAN / different VLANs / not tagged) reflects this -- it's not
+  just informational, it's why the path goes where it goes.</p>
+  <p>If the NIC you picked for either side is wirelessly/virtually linked
+  to an AP Group or Virtual Switch, a <strong>Via AP</strong> (or
+  <strong>Via uplink</strong>, for a Virtual Switch) dropdown appears next
+  to that NIC picker. Leave it on <strong>Best route (auto)</strong> to
+  let the finder pick whichever uplink gives the shortest route, same as
+  always -- or pick a specific one to see the route as if that device
+  were actually using that AP/uplink right now (e.g. a laptop you know is
+  associated to AP2, not whichever AP happens to be closest on paper).
+  Picking one just changes which uplink the search is allowed to use; it
+  doesn't change anything about your actual topology data. If that AP
+  Group / Virtual Switch only has one uplink on record so far, this shows
+  as a single grayed-out option instead of a real choice -- add a second
+  uplink from that device's own page once there's another one to add.</p>
+  <p>You can pin <em>both</em> sides at once, even to two different uplinks
+  on the very same AP Group / Virtual Switch -- e.g. two wireless clients
+  in one AP Group, one associated to AP5 and the other to AP6 right now.
+  Rather than treating that as "2 hops through the AP Group" (which
+  wouldn't reflect reality, since each client is actually going through a
+  different physical AP), the finder traces the real cabled backbone
+  between those two specific APs -- through whatever switches or routers
+  actually connect them. If no such cabled route exists between the two
+  APs, you'll see "no path found" rather than a route that wouldn't really
+  work.</p>
+
+  <h2>PoE (Power over Ethernet)</h2>
+  <p>Mark a port as <strong>Supplies PoE</strong> from its edit-port dialog
+  (Switch and Router/Firewall devices only), and mark a device of
+  <em>any</em> role as <strong>Requires PoE</strong> from its Add/Edit
+  device dialog. Wherever that device's connection is shown, you'll see a
+  green "PoE OK" badge if the port it's plugged into actually supplies
+  power, or an amber warning if it doesn't — a quick way to catch an AP or
+  camera that got moved to a non-PoE port.</p>
+
+  <h2>Signing in</h2>
+  <p>LinkLedger has two accounts: an admin account that can add, edit, and
+  delete anything, and a read-only viewer account for anyone who just
+  needs to look things up. Visiting the app shows a sign-in screen — enter
+  the username and password for whichever account you're using. See the
+  README for how these two accounts are initially set up. Signed-in-as
+  shows in the top right; read-only users won't see any of the edit/add/
+  delete controls.</p>
+  <p>If you sign in as admin and the account is still using its documented
+  default password, a reminder pops up pointing you to Settings to change
+  it -- it reappears on every admin login until the password is actually
+  changed. See the README's "Setting up accounts" section for the default
+  password and how the viewer account's password works.</p>
+
+  <h2>Logging out</h2>
+  <p><strong>Log out</strong> (top right, next to "Signed in as...") ends
+  your session on this device/browser and returns to the sign-in screen.
+  Useful on a shared computer, or to switch between the admin and viewer
+  accounts.</p>
+
+  <h2>Settings</h2>
+  <p><strong>Settings</strong> (top right, next to Help) opens a separate
+  page with every administrative action in one place: managing Sites,
+  Device roles, and Interface speeds, Backup, Restore, password changes,
+  Clear all connections, and Reset data. A read-only viewer only sees
+  Backup there; everything else needs the admin account.</p>
+  <p><strong>Sites</strong> manages the list of options the Add/Edit device
+  form's Site dropdown offers -- add, rename, or delete a site here. There's
+  no fixed built-in list (every homelab's set of physical locations is
+  different), so it starts empty. Renaming a site updates every device
+  already set to it, since that's still the same place with a new label;
+  deleting one just stops offering it going forward -- devices already set
+  to a deleted site keep that value (see the Reports tab to find those).</p>
+  <p><strong>Device roles</strong> is a set of checkboxes -- one per fixed
+  role -- controlling which ones show up in the Add/Edit device Role
+  dropdown. Unlike Sites, the roles themselves can't be added/renamed/
+  removed (several drive real behavior -- path finding, VLAN/PoE options,
+  and so on) -- this just hides ones you know you'll never use, e.g.
+  unchecking Patch Panel if you don't have any. Never affects a device
+  that already has a hidden role set -- only what's offered for new
+  picks.</p>
+  <p><strong>Interface speeds</strong> is the same idea as Device roles,
+  for the port speed dropdown instead: checkboxes for the recognized
+  speeds (10M through 100G). Uncheck whatever your network will never use
+  (most homelabs will never see 40G/100G, for instance) so the picker
+  stays short. Same non-destructive rule -- never affects a port that
+  already has a speed set, even one you've since unchecked here.</p>
+
+  <h2>Changing passwords</h2>
+  <p>From <strong>Settings</strong>, the admin account changes its own
+  password under <strong>Change your password</strong> — enter your
+  current password once and a new one twice to confirm. New passwords need
+  to be at least 8 characters. The viewer account has no self-service
+  password change of its own; instead the admin sets it directly under
+  <strong>Viewer account password</strong>, without needing to know the
+  viewer's current password. Either way, changing a password signs out
+  every other device/browser that was signed into that account — the
+  device you changed it from stays signed in (except when the admin sets
+  the viewer's password, since the admin isn't signed in as the viewer to
+  begin with).</p>
+
+  <h2>Backing up and restoring your data</h2>
+  <p><strong>Backup</strong>, in Settings and available to both accounts,
+  downloads a single .zip with everything in it: <code>devices.csv</code>,
+  <code>ports.csv</code>, <code>cables.csv</code>, <code>sites.csv</code>
+  (your managed Sites list), <code>roles.csv</code> and
+  <code>speeds.csv</code> (your Device roles / Interface speeds picker
+  settings -- see "Settings" above), and a small
+  <code>backup-info.json</code> noting when the backup was made and which
+  LinkLedger version made it. All six CSVs are plain, spreadsheet-editable
+  files using the columns described below.</p>
+  <p><strong>Restore</strong> (admin only) uploads a .zip and replaces your
+  data with what's inside it. It doesn't have to be a full backup —
+  LinkLedger looks at each CSV's column headers to figure out what it is
+  (the file names inside the zip don't matter), so a zip containing just
+  <code>ports.csv</code> only replaces ports and leaves everything else
+  alone. Whatever combination is found is applied with
+  <strong>devices, then ports, then cables</strong> always going first, in
+  that order, regardless of what order the files appear in the zip, since
+  replacing devices/ports cascades (see below) and applying them out of
+  order would wipe out something that was just restored; sites/roles/
+  speeds have no such dependency (on the other data, or on each other), so
+  they're simply applied afterward. The whole restore is validated before
+  anything is changed, so a bad file fails cleanly without touching your
+  data.</p>
+  <p>Because ports belong to devices and cables connect ports, replacing
+  one type can cascade: replacing <strong>devices</strong> also clears all
+  ports and cables (they can't exist without the devices they were on),
+  and replacing <strong>ports</strong> also clears all cables (they can't
+  exist without the ports they connected) — include a cables CSV in the
+  same restore (or restore one afterward) if you need those connections
+  back. Replacing <strong>cables</strong> only touches cables. Replacing
+  <strong>sites</strong> replaces the whole managed Sites list, but never
+  touches any device's own Site value (still just free text underneath —
+  see "Adding a device" above); replacing <strong>roles</strong> /
+  <strong>speeds</strong> replaces the whole enabled set for that picker,
+  same non-destructive rule as the Settings checkboxes themselves.</p>
+  <p>The expected columns for each type, if you're editing or building a
+  CSV by hand:</p>
+  <ul>
+    <li><strong>Devices:</strong> <code>name, role, model, site, notes, poe_required</code></li>
+    <li><strong>Ports:</strong> <code>device_name, port_name, speed, vlans, poe_supply, pair_with,
+      wireless_link, uplink_for, lag</code> (<code>pair_with</code> is only for patch-panel front/rear
+      pairing; <code>wireless_link</code>/<code>uplink_for</code> name an AP Group / Virtual Switch
+      device this port is a member of / an uplink for -- see "AP Groups and Virtual Switches" above;
+      <code>lag</code> names the LAG (scoped to that device) this port belongs to, created automatically
+      on import if it doesn't already exist -- see "LAGs" above. All three are blank in older exports,
+      which still re-import fine.)</li>
+    <li><strong>Cables:</strong> <code>device_a, port_a, device_b, port_b, label</code></li>
+    <li><strong>Sites:</strong> <code>name</code> -- one row per managed site.</li>
+    <li><strong>Roles:</strong> <code>role</code> -- one row per currently-<em>enabled</em> role (not
+      every fixed role -- just the ones checked under Settings -&gt; Device roles).</li>
+    <li><strong>Speeds:</strong> <code>speed</code> -- one row per currently-<em>enabled</em> speed,
+      same idea as Roles.</li>
+  </ul>
+  <p>Replacing <strong>ports</strong> also clears existing LAG groupings, for the same reason it
+  clears cables -- a LAG can't reference a port that no longer exists. The ports CSV's own
+  <code>lag</code> column repopulates them as part of that same restore.</p>
+
+  <h2>Clearing connections, or clearing everything</h2>
+  <p><strong>Clear all connections</strong>, in Settings (admin only),
+  permanently disconnects every cable and wireless/virtual link, leaving
+  your devices and ports themselves exactly as they are -- a quicker way
+  to start fresh when you're physically re-cabling a large part of your
+  network than disconnecting each one individually. Patch-panel front/rear
+  pairing and LAG groupings aren't affected, since those describe what a
+  port structurally is rather than what it's currently plugged into. A
+  single confirmation dialog spells out what's about to happen since it
+  can't be undone (download a backup first if there's any chance you'll
+  want the connections back).</p>
+  <p><strong>Reset data</strong>, in Settings (admin only), goes further:
+  it permanently deletes every device, port, and cable, and also clears
+  your Sites list and resets Device roles / Interface speeds back to their
+  full default (everything enabled) -- a genuinely blank slate to start
+  documenting a different environment from scratch, including its own
+  picker-setting customizations, not just its topology. It asks you to
+  type "RESET" to confirm, since it can't be undone (download a backup
+  first if there's any chance you'll want any of it back).</p>
+</div>
+</body>
+</html>
