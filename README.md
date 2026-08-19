@@ -73,7 +73,8 @@ locally.
    `/opt/linkledger`. (`scp -r linkledger/ user@yourserver:/opt/`, or unzip
    it there directly.)
 2. SSH into the host and build the image once:
-   ```docker compose up -d
+   ```bash
+   docker compose up -d
    ```
 The app listens on port **8000** inside the container and map it to
 **8130** on the host — change that if it collides with something. Once it's 
