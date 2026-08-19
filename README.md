@@ -1,7 +1,7 @@
 # LinkLedger
 
-A tiny single-container web app for tracking how everything in your home
-lab is physically and logically cabled together — search a device, see
+A tiny single-container web app for tracking how everything in your network
+is physically and logically connected together — search a device, see
 every port, and see exactly what's on the other end of the cable, including
 straight through patch panels.
 
@@ -9,30 +9,21 @@ Single container, SQLite (no separate database to run), full add/edit/
 delete control over devices, ports, and cables. A fresh deployment starts
 completely empty, ready for you to add your own topology.
 
+This is not intended for enterprise use but would work perfectly for a
+home-lab, small office setup, or other small to medium networks. Supports
+multiple sites, which can be kept isolated or ocnnected together (e.g., with
+a VPN).
+
+This is not an IPAM system and is not an CMDB/inventory system. We do not
+deal with layer 4 (IP addresses) or above and only track how things are
+physically and logically connected.
+
 ## What's inside
 
-- **Backend:** Python + FastAPI, serving a small JSON API and the static
-  frontend. Data lives in a single SQLite file.
-- **Frontend:** plain HTML/CSS/JS — no build step, no framework, just three
-  static files served directly.
-- **Data model:** Devices → Ports → Cables. A port can be "paired" with
-  another port on the same device (used for patch panel front/rear
-  pass-through) — tracing a connection walks cables *and* pairs, so asking
-  "what's this NAS NIC connected to" resolves all the way through the patch
-  panel to the actual switch port automatically.
+- **Backend:** Python + FastAPI + SQLite file.
+- **Frontend:** plain HTML/CSS/JS
 
-Everything (device/port/cable CRUD, the trace/pass-through logic, auth,
-the path-finder graph search, Backup/Restore round-tripping, PoE
-carry-forward) has been unit-tested against real topology data, and the
-UI has been exercised end-to-end with an automated browser test under
-both the admin and viewer accounts (search, add/edit/delete devices, bulk
-port add with range patterns like `Port[1-8]`, patch-panel paired-port
-bulk add, connect/disconnect ports, editing speed/VLAN/PoE on a port, the
-path finder, Backup/Restore, the reset flow, duplicate-name and
-port-already-in-use error handling). Schema migrations are also tested
-directly: an older database loaded against newer code gets every
-column/table added automatically, with existing data left untouched. The
-Dockerfile itself is straightforward (standard `python:3.12-slim` + pip
+The Dockerfile itself is straightforward (standard `python:3.12-slim` + pip
 install + uvicorn); if you hit anything odd on first boot, please open an
 issue.
 
@@ -42,28 +33,17 @@ LinkLedger has exactly two accounts (admin and viewer), signed into with an
 in-app login form. Both accounts are created automatically the very first
 time the app boots against a brand-new, empty database:
 
-| Account | Username | Password |
-|---|---|---|
-| admin (full read/write) | `admin` | **`linkledger-admin`** -- documented here, change it after your first login |
-| viewer (read-only) | `viewer` | a random password, generated fresh for this install |
-
 - **Admin's password is a known default, on purpose**, so you always know
   how to get into a fresh install: sign in with `admin` /
   `linkledger-admin`, then change it from the **Settings** page. Until you
-  do, the app reminds you every time you sign in as admin (a popup
-  pointing at Settings and the tutorial) and logs a startup warning.
-  **Do this before exposing the app beyond a trusted LAN.**
+  do, the app reminds you every time you sign in as admin and logs a startup
+  warning.
 - **Viewer's password is random and per-install**, and nobody -- including
   the admin -- is told what it is; it's generated once at first boot and
   never logged or exposed anywhere. You don't need to know it: the viewer
   account is entirely optional, and if/when you want to actually use it,
   sign in as **admin** and set a password you know for it from **Settings
-  → Viewer account password** (no need to know the old one — this is an
-  admin override on a different account, not a self-service change).
-
-**Account usernames are fixed** — always `admin` and `viewer` — and
-neither the usernames nor passwords are configurable via environment
-variable; there's nothing to set for either account.
+  → Viewer account password**.
 
 **Important:** none of this — the default admin password or the random
 viewer password — applies after the very first boot. Once the account rows
@@ -74,93 +54,45 @@ way to sign in, the only reset path today is wiping the database via a
 fresh volume, which loses your topology data too — there's no separate
 "forgot password" recovery yet.)
 
-**Upgrading an existing deployment:** nothing changes for you. This
-first-run behavior only applies the very first time the account rows are
-created in the database — an existing install already has those rows, so
-its accounts, usernames, and passwords are completely untouched by an
-upgrade.
+**Upgrading an existing deployment:** This first-run behavior only applies
+the very first time the account rows are created in the database — an 
+existing install already has those rows, so its accounts, usernames,
+and passwords are completely untouched by an upgrade.
 
-Sign-in uses a session cookie rather than the browser's native HTTP Basic
-Auth prompt — fine on a trusted home LAN, but don't expose LinkLedger to
-the internet without putting it behind something that does real TLS (a
-reverse proxy), since both the login form and the session cookie travel
-unencrypted over plain HTTP otherwise.
+LinkLedger is HTTP. Don't expose LinkLedger to the internet without putting
+it behind something that does real TLS (a reverse proxy), since both the
+login form and the session cookie travel unencrypted over plain HTTP.
 
 ## Deploying via Portainer
 
-LinkLedger isn't a published image on Docker Hub — it's your own code — so
-it needs to be *built* somewhere before Portainer can run it. There are two
-ways to do that; pick whichever fits how you work.
+LinkLedger isn't a published image on Docker Hub, so you need to build it
+locally. 
 
-### Option A — build once over SSH, deploy the image in Portainer (simplest)
 
 1. Copy this whole `linkledger/` folder onto your Docker host, e.g. to
    `/opt/linkledger`. (`scp -r linkledger/ user@yourserver:/opt/`, or unzip
    it there directly.)
 2. SSH into the host and build the image once:
-   ```bash
-   cd /opt/linkledger
-   docker build -t linkledger:latest .
+   ```docker compose up -d
    ```
-3. In Portainer: **Stacks → Add stack → Web editor**, name it `linkledger`,
-   and paste:
-   ```yaml
-   services:
-     linkledger:
-       image: linkledger:latest
-       container_name: linkledger
-       restart: unless-stopped
-       ports:
-         - "8130:8000"
-       volumes:
-         - patchbook_data:/data
-
-   volumes:
-     patchbook_data:
-   ```
-   No environment variables to set — see "Setting up accounts" above for
-   how accounts work (fixed usernames, a documented default password
-   for admin, a random one for viewer, both changeable from the app's
-   Settings page after your first login).
-4. **Deploy the stack.**
-5. Whenever you update the code later, re-run the `docker build` command on
-   the host, then in Portainer hit **Stacks → linkledger → Pull and
-   redeploy** (or just restart the container) to pick up the new image.
-
-### Option B — keep the code in a git repo, let Portainer build it
-
-If you'd rather push this to a private GitHub repo (or any git server
-reachable from your Docker host):
-
-1. Push the `linkledger/` folder to a repo.
-2. In Portainer: **Stacks → Add stack → Repository**, point it at the repo
-   and the `docker-compose.yml` at its root (the one included here, which
-   already has `build: .` set).
-3. **Deploy the stack.** Portainer will clone the repo and build the image
-   itself. Redeploying the stack later re-pulls and rebuilds.
-
-Either way, the app listens on port **8000** inside the container; both
-examples above map it to **8130** on the host — change that if it collides
-with something. Once it's up, visit `http://<your-server-ip>:8130`.
+The app listens on port **8000** inside the container and map it to
+**8130** on the host — change that if it collides with something. Once it's 
+up, visit `http://<your-server-ip>:8130`.
 
 ## First run
 
 On first boot, a brand-new deployment creates `/data/linkledger.db`
-(SQLite) completely empty — no demo devices, ports, or cables to delete
-before you can start documenting your own topology. Upgrading an existing
-deployment instead finds and reuses your existing database automatically —
-whatever's already in it carries over untouched. Every restart after that
-reuses the same file via the Docker volume.
+(SQLite) completely empty. Upgrading an existing deployment instead finds 
+and reuses your existing database automatically — whatever's already in
+it carries over untouched. Every restart after that reuses the same file
+via the Docker volume.
 
 ## Backing up
 
 Easiest option: open **Settings** in the app (top right, next to Help) and
-click **Backup** — downloads a single .zip with everything in it
-(devices, ports, cables, your Sites list, and your Device roles / Interface
-speeds picker settings, plus a small file noting when it was made and
-which version made it). Available to both accounts. Restore it, or move
-your data to another instance, with **Restore** on the same page
-(admin only) — this replaces your existing data with what's in the zip;
+click **Backup** — downloads a single .zip with everything in it.
+Restore it, or move your data to another instance, with **Restore** on the
+same page — this replaces your existing data with what's in the zip;
 see the Help page for the details, including how it handles a backup
 trimmed down to just one or two of the CSVs, and how replacing devices or
 ports can cascade into clearing ports/cables.
@@ -277,18 +209,6 @@ the same path, and start it again.
   feature and edge case) built on a small made-up example network, along
   with that same example network as a downloadable backup .zip so you can
   restore it and try everything hands-on.
-
-## Ideas for future work
-
-This is deliberately still an iterative build — nothing below is
-required, just ideas for once you've kicked the tires:
-
-- A "search by cable" or "unused ports" view, if that turns out useful.
-- TLS/reverse-proxy guidance if you want to reach this from outside your
-  LAN.
-
-Feedback and pull requests are welcome — please open an issue if you hit
-something rough.
 
 ## License
 
