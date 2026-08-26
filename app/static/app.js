@@ -210,6 +210,53 @@ async function renderView(state) {
   else await renderBrowseHome();
 }
 
+// The address bar always reflects the current device -- ?device=<id> when
+// the Device tab is open, no query string otherwise -- so the URL itself
+// can be bookmarked, pasted to someone else, or right-clicked/ctrl-clicked
+// to open in a new tab, the same as any normal multi-page site. Every
+// device link in the app is built from deviceHref()/deviceLinkClick()
+// below so this stays true everywhere a device is linked to, not just on
+// whatever page happens to be open when you copy the address bar.
+function urlForState(state) {
+  return state && state.tab === "device" && state.id
+    ? `${location.pathname}?device=${state.id}`
+    : location.pathname;
+}
+
+// Reads ?device=<id> off the URL the app was loaded with, so a bookmarked
+// or shared link (or a middle-click/ctrl-click on a device link, which
+// opens this same URL in a fresh tab) lands directly on that device
+// instead of always starting at Browse devices. An invalid or deleted id
+// isn't special-cased here -- renderDeviceView() already shows a graceful
+// "this device no longer exists" state for that, same as landing on one
+// via back/forward.
+function initialStateFromUrl() {
+  const id = new URLSearchParams(location.search).get("device");
+  return id && /^\d+$/.test(id) ? { tab: "device", id: Number(id) } : { tab: "browse" };
+}
+
+// The href for a link to a device -- pair with deviceLinkClick() on the
+// same element (see below) so a plain click still does the fast in-app
+// navigation, while right-click / middle-click / ctrl-click fall through
+// to the browser's own "open in new tab" handling of the real href
+// instead of doing nothing, which is all a bare onclick with no href can
+// ever offer.
+function deviceHref(id) {
+  return `${location.pathname}?device=${id}`;
+}
+
+// Click handler for every device link built from deviceHref() above.
+// Lets a modified click (middle-click, ctrl/cmd/shift/alt-click) or a
+// right-click's "open in new tab" fall through to the browser's normal
+// handling of the anchor's real href; only intercepts a plain left-click
+// to do the instant in-app navigation instead of a full page reload.
+function deviceLinkClick(event, id) {
+  if (event.defaultPrevented || event.button !== 0 ||
+      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  viewDevice(id);
+}
+
 async function navigateTo(state, opts) {
   opts = opts || {};
   if (!opts.replace && history.state) {
@@ -218,7 +265,7 @@ async function navigateTo(state, opts) {
     history.replaceState({ ...history.state, scrollY: window.scrollY }, "", location.href);
   }
   await renderView(state);
-  history[opts.replace ? "replaceState" : "pushState"]({ ...state, scrollY: 0 }, "", location.href);
+  history[opts.replace ? "replaceState" : "pushState"]({ ...state, scrollY: 0 }, "", urlForState(state));
   window.scrollTo(0, 0);
 }
 
@@ -240,7 +287,7 @@ searchInput.addEventListener("input", async () => {
     resultsBox.innerHTML = `<div class="result-item">No matches</div>`;
   } else {
     resultsBox.innerHTML = matches.map(d =>
-      `<div class="result-item" onclick="viewDevice(${d.id})"><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`
+      `<a class="result-item" href="${deviceHref(d.id)}" onclick="deviceLinkClick(event, ${d.id})"><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</a>`
     ).join("");
   }
   resultsBox.classList.add("show");
@@ -288,9 +335,9 @@ function onBrowseRoleFilterChange(value) {
 }
 
 function deviceChip(d) {
-  return `<button class="device-chip" onclick="viewDevice(${d.id})" title="${esc(d.name)}">
+  return `<a class="device-chip" href="${deviceHref(d.id)}" onclick="deviceLinkClick(event, ${d.id})" title="${esc(d.name)}">
     <span class="chip-name">${esc(d.name)}</span><span class="role">${esc(d.role || "—")}</span>
-  </button>`;
+  </a>`;
 }
 
 function cleanPortLabel(p) {
@@ -343,10 +390,10 @@ function chainHTML(trace, effectiveSpeed, effectiveVlans) {
       const kind = h.device_role === "AP Group" ? "wireless" : "virtual link";
       const via = h.uplink_count === 0 ? ", no uplink configured yet"
         : h.uplink_count > 1 ? `, via any of ${h.uplink_count} uplinks` : "";
-      return `<span class="arrow">&rarr;</span> <a class="link" title="${esc(h.device_name)}" onclick="viewDevice(${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${kind}${via})</span>`;
+      return `<span class="arrow">&rarr;</span> <a class="link" href="${deviceHref(h.device_id)}" title="${esc(h.device_name)}" onclick="deviceLinkClick(event, ${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${kind}${via})</span>`;
     }
     const label = cleanPortLabel(h.port_name);
-    return `<span class="arrow">&rarr;</span> <a class="link" title="${esc(h.device_name)}" onclick="viewDevice(${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${esc(label)})</span>`;
+    return `<span class="arrow">&rarr;</span> <a class="link" href="${deviceHref(h.device_id)}" title="${esc(h.device_name)}" onclick="deviceLinkClick(event, ${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${esc(label)})</span>`;
   }).join(" ");
   const extras = `${speedTag(effectiveSpeed)}${vlanTag(effectiveVlans)}`;
   return `${path}${extras ? " " + extras : ""}`;
@@ -356,7 +403,7 @@ function uplinkRows(d) {
   return `<table><tr><th>Uplink port</th><th></th></tr>${
     d.uplinks.length
       ? d.uplinks.map(u => `<tr>
-          <td><a class="link" onclick="viewDevice(${u.device_id})">${esc(u.device_name)}</a> <span class="via">(${esc(cleanPortLabel(u.port_name))})</span></td>
+          <td><a class="link" href="${deviceHref(u.device_id)}" onclick="deviceLinkClick(event, ${u.device_id})">${esc(u.device_name)}</a> <span class="via">(${esc(cleanPortLabel(u.port_name))})</span></td>
           <td>${isAdmin() ? `<button class="icon-btn" title="Remove uplink" onclick="removeUplink(${u.id}, ${d.id})">&#128465;</button>` : ""}</td>
         </tr>`).join("")
       : `<tr><td colspan="2"><span class="unused">no uplinks yet -- this ${esc(d.role)} can't reach the rest of the network</span></td></tr>`
@@ -367,7 +414,7 @@ function memberRows(d) {
   return `<table><tr><th>Member</th><th>VLAN</th></tr>${
     d.members.length
       ? d.members.map(m => `<tr>
-          <td><a class="link" onclick="viewDevice(${m.device_id})">${esc(m.device_name)}</a> <span class="via">(${esc(cleanPortLabel(m.port_name))})</span> ${roleBadge(m.device_role)}</td>
+          <td><a class="link" href="${deviceHref(m.device_id)}" onclick="deviceLinkClick(event, ${m.device_id})">${esc(m.device_name)}</a> <span class="via">(${esc(cleanPortLabel(m.port_name))})</span> ${roleBadge(m.device_role)}</td>
           <td>${vlanTag(m.vlans) || "—"}</td>
         </tr>`).join("")
       : `<tr><td colspan="2"><span class="unused">nothing joined yet -- link a device's port to this ${esc(d.role)} from that port's connect button</span></td></tr>`
@@ -465,7 +512,7 @@ async function renderDeviceView(id) {
       </tr>`;
     }).join("");
     portRows = `<table><tr><th>Port</th><th>Device side (rear)</th><th>Switch side (front)</th></tr>${portRows}</table>`;
-    extraButtons = `<button class="btn small admin-only" onclick="openPortModal(${d.id})">+ Add port(s)</button>
+    extraButtons = `<button class="btn small admin-only" onclick="openPortModal(${d.id}, '${d.role}')">+ Add port(s)</button>
         <button class="btn small admin-only" onclick="openPatchPanelModal(${d.id})">+ Add N paired ports</button>`;
   } else {
     portRows = `<table><tr><th>Port / NIC</th><th>Connected to</th><th></th></tr>` +
@@ -475,7 +522,7 @@ async function renderDeviceView(id) {
         <td>${portActions(p, d.role)}</td>
       </tr>`).join("") + `</table>`;
     portRows += lagRows(d);
-    extraButtons = `<button class="btn small admin-only" onclick="openPortModal(${d.id})">+ Add port(s)</button>` +
+    extraButtons = `<button class="btn small admin-only" onclick="openPortModal(${d.id}, '${d.role}')">+ Add port(s)</button>` +
       (d.ports.length >= 2 ? `<button class="btn small admin-only" onclick='openAddLagModal(${d.id}, ${JSON.stringify(d.ports.map(p => ({ id: p.id, name: p.name }))).replace(/'/g, "&#39;")})'>+ Add LAG</button>` : "");
   }
 
@@ -676,7 +723,7 @@ function pathSegmentHTML(seg, isFirst, isLast) {
     ? poeSupplyTag(true)
     : "";
   return `<div class="path-hop">
-    <div class="path-hop-device"><a class="link" title="${esc(seg.device_name)}" onclick="viewDevice(${seg.device_id})">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
+    <div class="path-hop-device"><a class="link" href="${deviceHref(seg.device_id)}" title="${esc(seg.device_name)}" onclick="deviceLinkClick(event, ${seg.device_id})">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
     <div class="path-hop-port">${portDisplay} ${poeBits}</div>
   </div>`;
 }
@@ -825,7 +872,7 @@ async function confirmDeleteDevice(id, name) {
 }
 
 // --- Add ports ---
-async function openPortModal(deviceId) {
+async function openPortModal(deviceId, deviceRole) {
   const speedOptions = await getSpeedOptions("");
   renderModal(`
     <h3>Add port(s)</h3>
@@ -839,6 +886,10 @@ async function openPortModal(deviceId) {
         ${speedOptions.map(s => `<option value="${s}">${s || "(not set)"}</option>`).join("")}
       </select>
     </div>
+    ${VLAN_POE_CAPABLE_ROLES.includes(deviceRole) ? `
+    <div class="field checkbox-field">
+      <label><input type="checkbox" id="f_portpoe"> Supplies PoE (applies to all)</label>
+    </div>` : ""}
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitPorts(${deviceId})">Add</button>
@@ -859,11 +910,13 @@ async function submitPorts(deviceId) {
   if (!raw.trim()) return;
   const names = expandPortPattern(raw);
   const speed = document.getElementById("f_portspeed").value;
+  const poeField = document.getElementById("f_portpoe");
+  const poe_supply = poeField ? poeField.checked : false;
   try {
     if (names.length === 1) {
-      await api(`/api/devices/${deviceId}/ports`, { method: "POST", body: JSON.stringify({ name: names[0], speed }) });
+      await api(`/api/devices/${deviceId}/ports`, { method: "POST", body: JSON.stringify({ name: names[0], speed, poe_supply }) });
     } else {
-      await api(`/api/devices/${deviceId}/ports/bulk`, { method: "POST", body: JSON.stringify({ names, speed }) });
+      await api(`/api/devices/${deviceId}/ports/bulk`, { method: "POST", body: JSON.stringify({ names, speed, poe_supply }) });
     }
     closeModal();
     showToast(`Added ${names.length} port(s)`);
@@ -977,7 +1030,7 @@ function reportSection(title, note, count, bodyHtml) {
 function reportPortsTable(ports) {
   return `<table><tr><th>Device</th><th>Port</th></tr>
     ${ports.map(p => `<tr>
-      <td><a class="link" onclick="viewDevice(${p.device_id})">${esc(p.device_name)}</a> ${roleBadge(p.device_role)}</td>
+      <td><a class="link" href="${deviceHref(p.device_id)}" onclick="deviceLinkClick(event, ${p.device_id})">${esc(p.device_name)}</a> ${roleBadge(p.device_role)}</td>
       <td class="port-name">${esc(cleanPortLabel(p.name))}</td>
     </tr>`).join("")}
   </table>`;
@@ -1390,7 +1443,7 @@ api("/api/whoami").then(who => {
   document.getElementById("whoami").textContent = who.username ? `Signed in as ${who.username}` : "";
   showMainApp();
   applyRoleVisibility();
-  navigateTo({ tab: "browse" }, { replace: true });
+  navigateTo(initialStateFromUrl(), { replace: true });
   if (who.admin_default_password) showDefaultPasswordReminder();
 });
 

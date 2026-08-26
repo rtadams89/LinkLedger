@@ -21,7 +21,12 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
    long device/hostname to read comfortably, rather than being squeezed
    down to the picker's own cramped width. */
 .results.wide { min-width:420px; }
-.result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; }
+/* .result-item and .device-chip below are real <a href> links (so
+   right-click/middle-click/ctrl-click open a device in a new tab like any
+   ordinary link -- see deviceHref()/deviceLinkClick() in app.js), not
+   plain divs/buttons -- reset the browser's default anchor color/underline
+   so they still just look like the same plain clickable rows/chips. */
+.result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; color:inherit; text-decoration:none; }
 .result-item:hover { background:#f8fafc; }
 /* Belt-and-suspenders for a name too long even for the widened dropdown
    above (or any other narrow spot .results is used) -- wrap it onto a
@@ -44,25 +49,34 @@ table { width:100%; border-collapse:collapse; font-size:13px; }
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
 td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
+/* Alternating row shading -- purely a readability aid for tables with more
+   than a couple of rows (port lists especially), so it's safe to apply
+   globally rather than opting each table in one at a time. Targets td
+   (not tr) so a header row -- always <th>, never <td> -- is never
+   accidentally shaded even where a table has no <thead> of its own. */
+tr:nth-child(even) td { background:var(--bg); }
 .port-name { font-weight:600; font-family: ui-monospace, monospace; font-size:12.5px; }
 
-/* Canonical styling for every in-app "click to jump to a device" pseudo-
-   link (an <a> with an onclick and no href -- browsers give those no
-   default styling at all, unlike a real href). Put class="link" directly
-   on the <a> itself wherever one of these is built, rather than relying on
-   some ancestor's class (a table cell, a card, whatever) to happen to
-   carry the styling -- that indirection is exactly what let several of
-   these render as unstyled plain text in the past (patch panel port
-   chains, Virtual Switch/AP Group uplinks & members, the Reports tables)
-   simply because the container they were dropped into didn't have the
-   right class. One rule, applied at the source, can't go stale that way. */
+/* Canonical styling for every in-app "click to jump to a device" link.
+   Put class="link" directly on the <a> itself wherever one of these is
+   built, rather than relying on some ancestor's class (a table cell, a
+   card, whatever) to happen to carry the styling -- that indirection is
+   exactly what let several of these render as unstyled plain text in the
+   past (patch panel port chains, Virtual Switch/AP Group uplinks &
+   members, the Reports tables) simply because the container they were
+   dropped into didn't have the right class. One rule, applied at the
+   source, can't go stale that way. Every one of these carries a real
+   href (see deviceHref() in app.js) alongside its onclick, so a normal
+   click still does the fast in-app navigation but right-click / middle-
+   click / ctrl-click still get real "open in new tab" behavior from the
+   browser, the same as any ordinary link. */
 a.link { color:var(--blue); text-decoration:none; font-weight:600; cursor:pointer; }
 a.link:hover { text-decoration:underline; }
 .chain .via { color:var(--muted); font-size:11px; }
 .arrow { color:#cbd5e1; }
 .unused { color:#cbd5e1; font-style:italic; font-size:12px; }
 .device-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
-.device-chip { padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; text-align:left; max-width:100%; overflow:hidden; }
+.device-chip { display:block; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; text-align:left; max-width:100%; overflow:hidden; color:inherit; text-decoration:none; }
 .device-chip:hover { border-color:var(--blue); }
 .device-chip .chip-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .device-chip .role { display:block; font-weight:400; color:var(--muted); font-size:11px; margin-top:2px; }
