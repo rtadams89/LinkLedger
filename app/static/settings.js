@@ -66,8 +66,8 @@ function renderSitesList() {
     <div class="row-actions" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;">
       <span>${esc(s.name)}</span>
       <span class="row-actions">
-        <button class="btn small" onclick="promptRenameSite(${s.id}, '${esc(s.name).replace(/'/g, "\\'")}')">Rename</button>
-        <button class="btn small danger" onclick="confirmDeleteSite(${s.id}, '${esc(s.name).replace(/'/g, "\\'")}')">Delete</button>
+        <button class="btn small" onclick='promptRenameSite(${s.id}, ${JSON.stringify(s.name).replace(/'/g, "&#39;")})'>Rename</button>
+        <button class="btn small danger" onclick='confirmDeleteSite(${s.id}, ${JSON.stringify(s.name).replace(/'/g, "&#39;")})'>Delete</button>
       </span>
     </div>`).join("");
 }

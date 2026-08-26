@@ -538,7 +538,7 @@ async function renderDeviceView(id) {
         <div class="spacer"></div>
         <button class="btn small" onclick="window.print()">Print</button>
         <button class="btn small admin-only" onclick="openDeviceModal(${d.id})">Edit</button>
-        <button class="btn small danger admin-only" onclick="confirmDeleteDevice(${d.id}, '${esc(d.name).replace(/'/g, "\\'")}')">Delete</button>
+        <button class="btn small danger admin-only" onclick='confirmDeleteDevice(${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'>Delete</button>
       </div>
       ${d.notes ? `<p class="note">${esc(d.notes)}</p>` : ""}
       ${portRows}
@@ -631,7 +631,7 @@ async function onPathDeviceSearch(which) {
   if (!q) { box.classList.remove("show"); return; }
   const matches = await api(`/api/devices?q=${encodeURIComponent(q)}`);
   box.innerHTML = matches.length
-    ? matches.map(d => `<div class="result-item" onclick="selectPathDevice('${which}', ${d.id}, '${esc(d.name).replace(/'/g, "\\'")}')"><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
+    ? matches.map(d => `<div class="result-item" onclick='selectPathDevice("${which}", ${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
     : `<div class="result-item">No matches</div>`;
   box.classList.add("show");
 }
@@ -1176,7 +1176,7 @@ async function onConnectDeviceSearch(which) {
   if (!q) { box.classList.remove("show"); return; }
   const matches = await api(`/api/devices?q=${encodeURIComponent(q)}`);
   box.innerHTML = matches.length
-    ? matches.map(d => `<div class="result-item" onclick="selectConnectDevice('${which}', ${d.id}, '${esc(d.name).replace(/'/g, "\\'")}')"><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
+    ? matches.map(d => `<div class="result-item" onclick='selectConnectDevice("${which}", ${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
     : `<div class="result-item">No matches</div>`;
   box.classList.add("show");
 }
