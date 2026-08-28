@@ -367,6 +367,22 @@ def _require_virtual_switch(conn, virtual_switch_id: int):
     return vs
 
 
+def _unset_virtual_link(conn, port):
+    """Clears virtual_switch_id on a port that's being unlinked (explicitly,
+    or as a side effect of create_cable's overwrite=True). A member port's
+    VLAN(s) field is only ever shown/editable in the UI because it's a
+    member (see VLAN_POE_CAPABLE_ROLES's role check, which the edit-port
+    modal ORs with virtual_switch_id) -- once unlinked, that value becomes
+    permanently invisible dead data for anything other than a Switch/
+    Router-role device, so it's cleared at the same time rather than left
+    behind as an orphan only a raw DB/CSV edit could ever remove."""
+    device = get_device(conn, port["device_id"])
+    if device["role"] in db.VLAN_POE_CAPABLE_ROLES:
+        conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE id = ?", (port["id"],))
+    else:
+        conn.execute("UPDATE ports SET virtual_switch_id = NULL, vlans = '' WHERE id = ?", (port["id"],))
+
+
 def set_virtual_link(conn, port_id: int, virtual_switch_id: int | None):
     """Marks a port as joining an AP Group / Virtual Switch instead of
     being cabled -- e.g. a wireless client's NIC, or a VM/container's vNIC.
@@ -374,7 +390,7 @@ def set_virtual_link(conn, port_id: int, virtual_switch_id: int | None):
     unlink."""
     port = get_port(conn, port_id)
     if virtual_switch_id is None:
-        conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE id = ?", (port_id,))
+        _unset_virtual_link(conn, port)
         return get_port(conn, port_id)
     _require_virtual_switch(conn, virtual_switch_id)
     if _port_cable(conn, port_id):
@@ -540,7 +556,7 @@ def create_cable(conn, port_a_id: int, port_b_id: int, label: str = "", overwrit
     if overwrite:
         for p in (pa, pb):
             if p["virtual_switch_id"]:
-                conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE id = ?", (p["id"],))
+                _unset_virtual_link(conn, p)
             existing = _port_cable(conn, p["id"])
             if existing:
                 conn.execute("DELETE FROM cables WHERE id = ?", (existing["id"],))
