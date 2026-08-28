@@ -1,6 +1,6 @@
 """CSV export/import for the three data tables (devices, ports, cables) plus
-the Sites list and the enabled-roles/enabled-speeds picker settings, and the
-"Backup"/"Restore" zip bundle built on top of all five (see
+the Sites list and the enabled-roles/enabled-speeds/enabled-reports picker
+settings, and the "Backup"/"Restore" zip bundle built on top of all six (see
 build_backup_zip / restore_backup_zip at the bottom of this file) -- that
 zip is what the Settings page's Backup/Restore buttons actually use.
 
@@ -24,19 +24,19 @@ A couple of things worth knowing about the replace semantics:
   touch devices.site on any existing device (that's still just free text,
   same as always -- see crud.py's Sites section), so this can never blank
   a device's site even if the restored list doesn't happen to include it.
-- Replacing roles/speeds replaces the whole enabled set for that picker
-  (there's only ever one such set, so "replace" and "merge" mean the same
-  thing here) -- same non-destructive contract as the Settings page
-  checkboxes: this only changes what's offered for new picks, never what's
-  already saved on a device/port.
-- A Restore applies whichever of devices/ports/cables/sites/roles/speeds it
-  finds inside the zip. devices/ports/cables always apply in that
-  dependency order regardless of the order the files appear in the zip --
-  otherwise, e.g., importing ports.csv after devices.csv would be fine,
-  but importing them in the reverse order would have the devices import's
-  cascade wipe out the ports that were just restored. sites/roles/speeds
-  have no such dependency (on the other data or on each other), so their
-  relative order doesn't matter.
+- Replacing roles/speeds/reports replaces the whole enabled set for that
+  picker (there's only ever one such set, so "replace" and "merge" mean the
+  same thing here) -- same non-destructive contract as the Settings page
+  checkboxes: this only changes what's offered/shown, never what's already
+  saved on a device/port, and never the underlying Reports-tab data itself.
+- A Restore applies whichever of devices/ports/cables/sites/roles/speeds/
+  reports it finds inside the zip. devices/ports/cables always apply in
+  that dependency order regardless of the order the files appear in the
+  zip -- otherwise, e.g., importing ports.csv after devices.csv would be
+  fine, but importing them in the reverse order would have the devices
+  import's cascade wipe out the ports that were just restored. sites/
+  roles/speeds/reports have no such dependency (on the other data or on
+  each other), so their relative order doesn't matter.
 """
 
 import csv
@@ -57,15 +57,16 @@ PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pai
                 "wireless_link", "uplink_for", "lag"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
 SITE_COLUMNS = ["name"]
-ROLE_COLUMNS = ["role"]    # one row per currently-ENABLED role (see crud.get_enabled_roles)
-SPEED_COLUMNS = ["speed"]  # one row per currently-ENABLED speed (see crud.get_enabled_speeds)
+ROLE_COLUMNS = ["role"]      # one row per currently-ENABLED role (see crud.get_enabled_roles)
+SPEED_COLUMNS = ["speed"]    # one row per currently-ENABLED speed (see crud.get_enabled_speeds)
+REPORT_COLUMNS = ["report"]  # one row per currently-ENABLED report (see crud.get_enabled_reports)
 
 # Used to auto-detect which type an uploaded CSV is, from its header row --
 # deliberately just the columns a ports CSV has ALWAYS had, so older
 # exports (without wireless_link/uplink_for) still detect correctly. The
-# single-column schemas (sites/roles/speeds) can't collide with devices/
-# ports/cables -- none of those has a bare "name"/"role"/"speed" as its
-# ENTIRE required column set.
+# single-column schemas (sites/roles/speeds/reports) can't collide with
+# devices/ports/cables -- none of those has a bare "name"/"role"/"speed"/
+# "report" as its ENTIRE required column set.
 _SCHEMAS = {
     "devices": set(DEVICE_COLUMNS),
     "ports": {"device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with"},
@@ -73,6 +74,7 @@ _SCHEMAS = {
     "sites": set(SITE_COLUMNS),
     "roles": set(ROLE_COLUMNS),
     "speeds": set(SPEED_COLUMNS),
+    "reports": set(REPORT_COLUMNS),
 }
 
 
@@ -101,6 +103,8 @@ def export_csv(conn, kind: str) -> bytes:
         return _export_roles(conn)
     if kind == "speeds":
         return _export_speeds(conn)
+    if kind == "reports":
+        return _export_reports(conn)
     raise ValueError(f"unknown export kind: {kind!r}")
 
 
@@ -191,6 +195,15 @@ def _export_speeds(conn) -> bytes:
     return out.getvalue().encode("utf-8")
 
 
+def _export_reports(conn) -> bytes:
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(REPORT_COLUMNS)
+    for report in crud.get_enabled_reports(conn):
+        w.writerow([report])
+    return out.getvalue().encode("utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Import
 # ---------------------------------------------------------------------------
@@ -226,7 +239,7 @@ def import_csv(conn, data: bytes) -> dict:
     if kind is None:
         raise crud.ConflictError(
             "unrecognized CSV columns -- expected a devices, ports, cables, sites, roles, "
-            "or speeds export from LinkLedger (see Help for the exact column names)"
+            "speeds, or reports export from LinkLedger (see Help for the exact column names)"
         )
     rows = list(reader)
 
@@ -240,8 +253,10 @@ def import_csv(conn, data: bytes) -> dict:
         _import_sites(conn, rows)
     elif kind == "roles":
         _import_roles(conn, rows)
-    else:
+    elif kind == "speeds":
         _import_speeds(conn, rows)
+    else:
+        _import_reports(conn, rows)
 
     return {"type": kind, "count": len(rows)}
 
@@ -477,6 +492,26 @@ def _import_speeds(conn, rows):
     crud.set_enabled_speeds(conn, speeds)
 
 
+def _import_reports(conn, rows):
+    """Replaces the Reports-tab visibility setting outright, same story as
+    _import_roles/_import_speeds above. Doesn't touch the underlying report
+    data -- data_quality_report always computes every check regardless."""
+    errors = []
+    reports = []
+    for i, row in enumerate(rows, start=2):
+        report = (row.get("report") or "").strip()
+        if not report:
+            errors.append(f"row {i}: missing report")
+            continue
+        if report not in crud.REPORT_KEYS:
+            errors.append(f"row {i}: unrecognized report '{report}'")
+            continue
+        reports.append(report)
+    if errors:
+        _raise_validation(errors)
+    crud.set_enabled_reports(conn, reports)
+
+
 # ---------------------------------------------------------------------------
 # Backup / Restore -- a single .zip bundling all six CSVs plus a small
 # metadata file, instead of asking someone to export/import each type as a
@@ -488,11 +523,12 @@ BACKUP_INFO_FILENAME = "backup-info.json"
 
 def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
     """Builds the Backup .zip: devices.csv, ports.csv, cables.csv, sites.csv,
-    roles.csv, speeds.csv, and a backup-info.json noting when the backup was
-    made and which LinkLedger version made it. roles.csv/speeds.csv capture
-    the enabled-picker settings (Settings -> Device roles / Interface
-    speeds), not the fixed underlying lists. Returns (zip_bytes, created_at)
-    -- the caller uses created_at to name the downloaded file."""
+    roles.csv, speeds.csv, reports.csv, and a backup-info.json noting when
+    the backup was made and which LinkLedger version made it. roles.csv/
+    speeds.csv/reports.csv capture the enabled-picker settings (Settings ->
+    Device roles / Interface speeds / Reports shown), not the fixed
+    underlying lists. Returns (zip_bytes, created_at) -- the caller uses
+    created_at to name the downloaded file."""
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     info = {"linkledger_version": version, "created_at": created_at}
 
@@ -504,6 +540,7 @@ def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
         zf.writestr("sites.csv", export_csv(conn, "sites"))
         zf.writestr("roles.csv", export_csv(conn, "roles"))
         zf.writestr("speeds.csv", export_csv(conn, "speeds"))
+        zf.writestr("reports.csv", export_csv(conn, "reports"))
         zf.writestr(BACKUP_INFO_FILENAME, json.dumps(info, indent=2) + "\n")
     return buf.getvalue(), created_at
 
@@ -511,20 +548,20 @@ def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
 def restore_backup_zip(conn, data: bytes) -> dict:
     """Restores a Backup .zip (see build_backup_zip) -- or really any zip
     containing one or more of devices.csv/ports.csv/cables.csv/sites.csv/
-    roles.csv/speeds.csv (by column header, not filename, same detection as
-    a single-CSV import), so a backup trimmed down to just the file(s) you
-    changed still works. Applies whichever types it finds -- devices/ports/
-    cables always in that dependency order regardless of what order they
-    appear in the zip (see the module docstring for why); sites/roles/
-    speeds have no dependency on those or each other, so they're applied
-    afterward in a fixed but otherwise arbitrary order. Non-CSV members
-    (backup-info.json, thumbnails from an unzip-then-rezip, whatever) and
-    CSVs that don't match a known column schema are silently ignored.
-    Raises ConflictError if nothing usable is found, or if any of the CSVs
-    found fails validation -- the whole restore shares one connection/
-    transaction, so if e.g. the cables CSV fails after devices and ports
-    already applied, none of it is committed, not even the parts that
-    individually would have been fine."""
+    roles.csv/speeds.csv/reports.csv (by column header, not filename, same
+    detection as a single-CSV import), so a backup trimmed down to just the
+    file(s) you changed still works. Applies whichever types it finds --
+    devices/ports/cables always in that dependency order regardless of what
+    order they appear in the zip (see the module docstring for why); sites/
+    roles/speeds/reports have no dependency on those or each other, so
+    they're applied afterward in a fixed but otherwise arbitrary order.
+    Non-CSV members (backup-info.json, thumbnails from an unzip-then-rezip,
+    whatever) and CSVs that don't match a known column schema are silently
+    ignored. Raises ConflictError if nothing usable is found, or if any of
+    the CSVs found fails validation -- the whole restore shares one
+    connection/transaction, so if e.g. the cables CSV fails after devices
+    and ports already applied, none of it is committed, not even the parts
+    that individually would have been fine."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
@@ -546,12 +583,12 @@ def restore_backup_zip(conn, data: bytes) -> dict:
 
     if not detected:
         raise crud.ConflictError(
-            "no devices/ports/cables/sites/roles/speeds CSV found inside the .zip -- "
+            "no devices/ports/cables/sites/roles/speeds/reports CSV found inside the .zip -- "
             "expected a LinkLedger backup"
         )
 
     summary = {}
-    for kind in ("devices", "ports", "cables", "sites", "roles", "speeds"):
+    for kind in ("devices", "ports", "cables", "sites", "roles", "speeds", "reports"):
         if kind in detected:
             result = import_csv(conn, detected[kind])
             summary[result["type"]] = result["count"]

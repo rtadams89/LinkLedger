@@ -222,6 +222,10 @@ class EnabledRolesIn(BaseModel):
     roles: list[str]
 
 
+class EnabledReportsIn(BaseModel):
+    reports: list[str]
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -494,6 +498,29 @@ def api_set_speed_settings(body: EnabledSpeedsIn):
 @app.get("/api/reports")
 def api_reports():
     return handle(crud.data_quality_report)
+
+
+# ---------------------------------------------------------------------------
+# Reports-tab visibility setting -- which of the checks above actually get
+# shown (see crud.get_enabled_reports's docstring). Same shape and same
+# admin-only-to-change contract as /api/settings/speeds and /api/settings/
+# roles above. "all" carries the display title alongside each key so the
+# Settings page and the Reports tab both render the same title without
+# either one hardcoding its own copy.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/reports")
+def api_get_report_settings():
+    with db.session() as conn:
+        return {
+            "all": [{"key": k, "title": t} for k, t in crud.REPORT_DEFS],
+            "enabled": crud.get_enabled_reports(conn),
+        }
+
+
+@app.put("/api/settings/reports", dependencies=[Depends(require_admin)])
+def api_set_report_settings(body: EnabledReportsIn):
+    return {"enabled": handle(crud.set_enabled_reports, body.reports)}
 
 
 # ---------------------------------------------------------------------------

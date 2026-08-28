@@ -1015,16 +1015,22 @@ async function submitEditPort(portId) {
 // just a click away.
 // ---------------------------------------------------------------------------
 
-function reportSection(title, note, count, bodyHtml) {
+// Each report is a plain <details> -- collapsed by default (no "open"
+// attribute) every time renderReportsView() runs, i.e. every time the
+// Reports tab is opened, and toggled purely by the browser's native
+// click-the-summary behavior. Title and count sit in the <summary> so
+// they're visible even while collapsed; the note + full body only render
+// (into the DOM at all) once expanded.
+function reportSection(key, title, note, count, bodyHtml) {
   return `
-    <div class="card">
-      <div class="device-header">
+    <details class="card report-card" data-report="${esc(key)}">
+      <summary class="device-header">
         <strong>${esc(title)}</strong>
         <span class="tag" style="background:${count ? "#fef2f2" : "#dcfce7"}; color:${count ? "#b91c1c" : "#15803d"};">${count}</span>
-      </div>
-      <p class="note" style="margin:0 0 10px;">${note}</p>
+      </summary>
+      <p class="note" style="margin:10px 0 10px;">${note}</p>
       ${count === 0 ? `<div class="empty-state">Nothing to report here.</div>` : bodyHtml}
-    </div>`;
+    </details>`;
 }
 
 function reportPortsTable(ports) {
@@ -1056,59 +1062,82 @@ function reportUnmanagedSites(groups) {
     </div>`).join("");
 }
 
+// One entry per report key (see crud.REPORT_DEFS on the backend, which
+// also supplies the title and display order -- this map only supplies the
+// note text and how to turn that key's slice of /api/reports into a count
+// + body). Keeping title/order server-side means the Settings page and
+// this view can never show different titles or a different order for the
+// same report.
+function reportRenderers(r, devGrid) {
+  return {
+    missing_site: () => ({
+      note: "Devices with no Site value set.",
+      count: r.missing_site.length, body: devGrid(r.missing_site),
+    }),
+    missing_model: () => ({
+      note: "Devices with no Model value set.",
+      count: r.missing_model.length, body: devGrid(r.missing_model),
+    }),
+    missing_role: () => ({
+      note: "Devices with no Role set &mdash; role drives VLAN/PoE options, path finding, and more, so these are worth a look.",
+      count: r.missing_role.length, body: devGrid(r.missing_role),
+    }),
+    unmanaged_site_values: () => ({
+      note: "Devices whose Site is set to a value that isn't in Settings &rarr; Sites &mdash; could be a typo, data from before the list existed, or a site that's since been renamed/removed there.",
+      count: r.unmanaged_site_values.reduce((n, g) => n + g.devices.length, 0),
+      body: reportUnmanagedSites(r.unmanaged_site_values),
+    }),
+    missing_speed: () => ({
+      note: "Ports with no Speed set (excludes patch panel pass-through ports and wireless/virtual member links, which don't have a speed of their own).",
+      count: r.missing_speed.length, body: reportPortsTable(r.missing_speed),
+    }),
+    unused_ports: () => ({
+      note: "Ports with no cable, no pairing, and no wireless/virtual link &mdash; just sitting there unconnected.",
+      count: r.unused_ports.length, body: reportPortsTable(r.unused_ports),
+    }),
+    no_uplinks: () => ({
+      note: "These have no way to actually reach the rest of the network yet &mdash; add at least one uplink from the device's own page.",
+      count: r.no_uplinks.length, body: devGrid(r.no_uplinks),
+    }),
+    no_ports: () => ({
+      note: "Devices added but never given any ports yet.",
+      count: r.no_ports.length, body: devGrid(r.no_ports),
+    }),
+    poe_unmet: () => ({
+      note: "Devices flagged Requires PoE where nothing along any port's trace is tagged as supplying it.",
+      count: r.poe_unmet.length, body: devGrid(r.poe_unmet),
+    }),
+    speed_mismatches: () => ({
+      note: "A device's port is rated faster than the switch/router port it ultimately connects to (patch panels in between are looked through) &mdash; it can never actually run faster than that.",
+      count: r.speed_mismatches.length, body: reportSpeedMismatches(r.speed_mismatches),
+    }),
+  };
+}
+
 async function renderReportsView() {
   const box = document.getElementById("reportsView");
   box.innerHTML = `<div class="card"><div class="empty-state">Loading…</div></div>`;
-  let r;
+  let r, settings;
   try {
-    r = await api("/api/reports");
+    [r, settings] = await Promise.all([api("/api/reports"), api("/api/settings/reports")]);
   } catch (e) {
     box.innerHTML = `<div class="card"><div class="error-msg">${esc(e.message)}</div></div>`;
     return;
   }
 
   const devGrid = devices => `<div class="device-grid">${devices.map(deviceChip).join("")}</div>`;
-  const unmanagedCount = r.unmanaged_site_values.reduce((n, g) => n + g.devices.length, 0);
+  const renderers = reportRenderers(r, devGrid);
+  const enabled = new Set(settings.enabled);
 
-  box.innerHTML = [
-    reportSection("Devices missing a site", "Devices with no Site value set.",
-      r.missing_site.length, devGrid(r.missing_site)),
+  const sections = settings.all
+    .filter(def => enabled.has(def.key))
+    .map(def => {
+      const { note, count, body } = renderers[def.key]();
+      return reportSection(def.key, def.title, note, count, body);
+    });
 
-    reportSection("Devices missing a model", "Devices with no Model value set.",
-      r.missing_model.length, devGrid(r.missing_model)),
-
-    reportSection("Devices missing a role",
-      "Devices with no Role set &mdash; role drives VLAN/PoE options, path finding, and more, so these are worth a look.",
-      r.missing_role.length, devGrid(r.missing_role)),
-
-    reportSection("Site values not in your managed list",
-      "Devices whose Site is set to a value that isn't in Settings &rarr; Sites &mdash; could be a typo, data from before the list existed, or a site that's since been renamed/removed there.",
-      unmanagedCount, reportUnmanagedSites(r.unmanaged_site_values)),
-
-    reportSection("Ports missing a speed",
-      "Ports with no Speed set (excludes patch panel pass-through ports and wireless/virtual member links, which don't have a speed of their own).",
-      r.missing_speed.length, reportPortsTable(r.missing_speed)),
-
-    reportSection("Unused ports",
-      "Ports with no cable, no pairing, and no wireless/virtual link &mdash; just sitting there unconnected.",
-      r.unused_ports.length, reportPortsTable(r.unused_ports)),
-
-    reportSection("AP Groups / Virtual Switches with no uplinks",
-      "These have no way to actually reach the rest of the network yet &mdash; add at least one uplink from the device's own page.",
-      r.no_uplinks.length, devGrid(r.no_uplinks)),
-
-    reportSection("Devices with no ports",
-      "Devices added but never given any ports yet.",
-      r.no_ports.length, devGrid(r.no_ports)),
-
-    reportSection("“Requires PoE” devices not actually getting it",
-      "Devices flagged Requires PoE where nothing along any port's trace is tagged as supplying it.",
-      r.poe_unmet.length, devGrid(r.poe_unmet)),
-
-    reportSection("End devices faster than what they're plugged into",
-      "A device's port is rated faster than the switch/router port it ultimately connects to (patch panels in between are looked through) &mdash; it can never actually run faster than that.",
-      r.speed_mismatches.length, reportSpeedMismatches(r.speed_mismatches)),
-  ].join("");
+  box.innerHTML = sections.length ? sections.join("") : `
+    <div class="card"><div class="empty-state">No reports are shown &mdash; pick some from Settings &rarr; Reports shown.</div></div>`;
 }
 
 async function deletePort(portId) {

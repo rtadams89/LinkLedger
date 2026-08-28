@@ -49,9 +49,17 @@
     <button class="btn primary" onclick="submitSpeedSettings()" style="margin-top:10px;">Save</button>
   </div>
 
+  <div class="card settings-section admin-only">
+    <h2>Reports shown</h2>
+    <p class="note">Choose which checks appear on the Reports tab. Unchecking one here just hides that card &mdash; it doesn't change any underlying data, and re-checking it brings it right back.</p>
+    <div id="reportsError"></div>
+    <div id="reportsList"></div>
+    <button class="btn primary" onclick="submitReportSettings()" style="margin-top:10px;">Save</button>
+  </div>
+
   <div class="card settings-section">
     <h2>Backup</h2>
-    <p class="note">Downloads a single .zip with everything in it — devices, ports, cables, your Sites list, and your Device roles / Interface speeds picker settings — plus a small file noting when the backup was made and which LinkLedger version made it.</p>
+    <p class="note">Downloads a single .zip with everything in it — devices, ports, cables, your Sites list, and your Device roles / Interface speeds / Reports shown picker settings — plus a small file noting when the backup was made and which LinkLedger version made it.</p>
     <button class="btn primary" onclick="doBackup()">Download backup</button>
   </div>
 
@@ -90,7 +98,7 @@
 
   <div class="card settings-section admin-only">
     <h2>Reset all data</h2>
-    <p class="note">Permanently deletes every device, port, and cable, and also clears your Sites list and resets Device roles / Interface speeds back to their full default (everything enabled) — a genuinely blank slate to start documenting a different environment from scratch. This cannot be undone; download a backup first if there's any chance you'll want any of it back.</p>
+    <p class="note">Permanently deletes every device, port, and cable, and also clears your Sites list and resets Device roles / Interface speeds / Reports shown back to their full default (everything enabled/shown) — a genuinely blank slate to start documenting a different environment from scratch. This cannot be undone; download a backup first if there's any chance you'll want any of it back.</p>
     <button class="btn danger" onclick="confirmResetData()">Reset data</button>
   </div>
 </div>

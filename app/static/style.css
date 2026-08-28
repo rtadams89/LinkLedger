@@ -45,6 +45,24 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .device-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
 .device-header h2 { margin:0; font-size:18px; }
 .spacer { flex:1; }
+
+/* Reports tab: each report is a native <details>/<summary> pair (see
+   reportSection() in app.js) so it collapses/expands with zero JS -- the
+   browser handles the click-to-toggle itself. Collapsed by default every
+   time the Reports tab is opened; only the title + count in the summary
+   are visible while collapsed. The summary reuses .device-header's flex
+   layout, so the disclosure triangle is the only thing added here. */
+.report-card > summary { cursor:pointer; list-style:none; margin-bottom:0; }
+.report-card > summary::-webkit-details-marker { display:none; }
+.report-card > summary::before {
+  content:"\25B8";
+  display:inline-block;
+  width:10px;
+  color:var(--muted);
+  transition:transform .12s ease;
+}
+.report-card[open] > summary { margin-bottom:14px; }
+.report-card[open] > summary::before { transform:rotate(90deg); }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
 td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }

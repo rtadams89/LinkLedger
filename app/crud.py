@@ -16,6 +16,28 @@ SPEED_MBPS = {
     "5G": 5000, "10G": 10000, "25G": 25000, "40G": 40000, "100G": 100000,
 }
 
+# The fixed set of Reports-tab checks and their display titles/order, in one
+# place so the Settings page's "which reports are shown" checkboxes and the
+# Reports tab itself never drift out of sync with each other. Keyed the same
+# as data_quality_report's return dict below. Whether a given check is
+# *enabled* (see get_enabled_reports/set_enabled_reports) only controls
+# whether the frontend renders that card -- data_quality_report always
+# computes and returns all of them regardless, same as the speed/role
+# picker settings only ever hide what's *offered*, never what's stored.
+REPORT_DEFS = [
+    ("missing_site", "Devices missing a site"),
+    ("missing_model", "Devices missing a model"),
+    ("missing_role", "Devices missing a role"),
+    ("unmanaged_site_values", "Site values not in your managed list"),
+    ("missing_speed", "Ports missing a speed"),
+    ("unused_ports", "Unused ports"),
+    ("no_uplinks", "AP Groups / Virtual Switches with no uplinks"),
+    ("no_ports", "Devices with no ports"),
+    ("poe_unmet", "“Requires PoE” devices not actually getting it"),
+    ("speed_mismatches", "End devices faster than what they're plugged into"),
+]
+REPORT_KEYS = [k for k, _ in REPORT_DEFS]
+
 
 class ConflictError(Exception):
     """Raised for user-fixable data conflicts (duplicate name, port already
@@ -341,6 +363,41 @@ def set_enabled_roles(conn, roles: list[str]):
     ordered = [r for r in db.ROLES if r in set(roles)]
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('enabled_roles', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (json.dumps(ordered),),
+    )
+    return ordered
+
+
+# ---------------------------------------------------------------------------
+# Reports-tab visibility -- which of the checks in data_quality_report (see
+# REPORT_DEFS above) actually get shown on the Reports tab. Same pattern and
+# same non-destructive contract as enabled_roles/enabled_speeds above: a
+# single JSON array under its own `meta` key, admin-editable from Settings,
+# defaults to everything shown, and never affects what data_quality_report
+# itself computes -- only whether the frontend renders that card.
+# ---------------------------------------------------------------------------
+
+def get_enabled_reports(conn):
+    """Defaults to every report (today's full Reports tab, unchanged) until
+    someone visits Settings and hides some."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'enabled_reports'").fetchone()
+    if not row or not row["value"]:
+        return list(REPORT_KEYS)
+    try:
+        saved = set(json.loads(row["value"]))
+    except (ValueError, TypeError):
+        return list(REPORT_KEYS)
+    return [r for r in REPORT_KEYS if r in saved]
+
+
+def set_enabled_reports(conn, reports: list[str]):
+    unknown = [r for r in reports if r not in REPORT_KEYS]
+    if unknown:
+        raise ConflictError(f"unrecognized report(s): {', '.join(unknown)}")
+    ordered = [r for r in REPORT_KEYS if r in set(reports)]
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('enabled_reports', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (json.dumps(ordered),),
     )
@@ -744,17 +801,18 @@ def clear_all_connections(conn):
 
 def reset_all_data(conn):
     """Wipes every device, port, and cable -- a true blank slate -- and also
-    clears the Sites list and resets the Device roles / Interface speeds
-    picker settings back to their full default (everything enabled). This
-    is the "start documenting a completely different environment from
-    scratch" button, so it clears every bit of *your* customization, not
-    just the topology data -- the fixed Roles list itself (db.ROLES) is the
-    only thing that can't change, since it's not user data to begin with."""
+    clears the Sites list and resets the Device roles / Interface speeds /
+    Reports-tab picker settings back to their full default (everything
+    enabled/shown). This is the "start documenting a completely different
+    environment from scratch" button, so it clears every bit of *your*
+    customization, not just the topology data -- the fixed Roles list itself
+    (db.ROLES) is the only thing that can't change, since it's not user data
+    to begin with."""
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
     conn.execute("DELETE FROM sites")
-    conn.execute("DELETE FROM meta WHERE key IN ('enabled_roles', 'enabled_speeds')")
+    conn.execute("DELETE FROM meta WHERE key IN ('enabled_roles', 'enabled_speeds', 'enabled_reports')")
 
 
 # ---------------------------------------------------------------------------

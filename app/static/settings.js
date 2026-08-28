@@ -179,6 +179,39 @@ async function submitSpeedSettings() {
   }
 }
 
+// --- Reports shown ---
+let REPORTS_CACHE = { all: [], enabled: [] };
+
+async function loadReportSettings() {
+  try {
+    REPORTS_CACHE = await api("/api/settings/reports");
+    renderReportSettingsList();
+  } catch (e) {
+    document.getElementById("reportsError").innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
+  }
+}
+
+function renderReportSettingsList() {
+  const box = document.getElementById("reportsList");
+  box.innerHTML = REPORTS_CACHE.all.map(r => `
+    <label class="checkbox-field" style="display:flex; margin-bottom:6px;">
+      <input type="checkbox" value="${esc(r.key)}" class="reportCheckbox" ${REPORTS_CACHE.enabled.includes(r.key) ? "checked" : ""}> ${esc(r.title)}
+    </label>`).join("");
+}
+
+async function submitReportSettings() {
+  const checked = Array.from(document.querySelectorAll(".reportCheckbox:checked")).map(el => el.value);
+  const errBox = document.getElementById("reportsError");
+  errBox.innerHTML = "";
+  try {
+    await api("/api/settings/reports", { method: "PUT", body: JSON.stringify({ reports: checked }) });
+    showToast("Report settings saved");
+    loadReportSettings();
+  } catch (e) {
+    errBox.innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
+  }
+}
+
 // --- Backup ---
 function doBackup() {
   window.location.href = "/api/backup";
@@ -289,7 +322,7 @@ async function confirmClearConnections() {
 async function confirmResetData() {
   const typed = prompt(
     'This permanently deletes every device, port, and cable, and also clears your Sites list and ' +
-    'resets Device roles / Interface speeds back to their full default. This cannot be undone.\n\n' +
+    'resets Device roles / Interface speeds / Reports shown back to their full default. This cannot be undone.\n\n' +
     'Type RESET to confirm:'
   );
   if (typed !== "RESET") return;
@@ -313,6 +346,7 @@ api("/api/whoami").then(who => {
     loadSites();
     loadRoleSettings();
     loadSpeedSettings();
+    loadReportSettings();
   }
 }).catch(() => {
   document.getElementById("notSignedIn").style.display = "block";
