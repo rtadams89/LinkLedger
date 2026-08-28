@@ -63,7 +63,7 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 }
 .report-card[open] > summary { margin-bottom:14px; }
 .report-card[open] > summary::before { transform:rotate(90deg); }
-table { width:100%; border-collapse:collapse; font-size:13px; }
+table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
 td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
