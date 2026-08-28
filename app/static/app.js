@@ -1036,6 +1036,18 @@ function reportPortsTable(ports) {
   </table>`;
 }
 
+function reportSpeedMismatches(rows) {
+  return `<table><tr><th>End device</th><th>Port</th><th></th><th>Connects to (via patch panels, if any)</th><th>Port</th></tr>
+    ${rows.map(r => `<tr>
+      <td><a class="link" href="${deviceHref(r.device_id)}" onclick="deviceLinkClick(event, ${r.device_id})">${esc(r.device_name)}</a> ${roleBadge(r.device_role)}</td>
+      <td class="port-name">${esc(cleanPortLabel(r.port_name))} ${speedTag(r.port_speed)}</td>
+      <td class="note">&rarr;</td>
+      <td><a class="link" href="${deviceHref(r.target_device_id)}" onclick="deviceLinkClick(event, ${r.target_device_id})">${esc(r.target_device_name)}</a> ${roleBadge(r.target_device_role)}</td>
+      <td class="port-name">${esc(cleanPortLabel(r.target_port_name))} ${speedTag(r.target_port_speed)}</td>
+    </tr>`).join("")}
+  </table>`;
+}
+
 function reportUnmanagedSites(groups) {
   return groups.map(g => `
     <div style="margin-bottom:14px;">
@@ -1092,6 +1104,10 @@ async function renderReportsView() {
     reportSection("“Requires PoE” devices not actually getting it",
       "Devices flagged Requires PoE where nothing along any port's trace is tagged as supplying it.",
       r.poe_unmet.length, devGrid(r.poe_unmet)),
+
+    reportSection("End devices faster than what they're plugged into",
+      "A device's port is rated faster than the switch/router port it ultimately connects to (patch panels in between are looked through) &mdash; it can never actually run faster than that.",
+      r.speed_mismatches.length, reportSpeedMismatches(r.speed_mismatches)),
   ].join("");
 }
 

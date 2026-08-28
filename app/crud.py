@@ -946,6 +946,42 @@ def data_quality_report(conn):
             continue
         poe_unmet.append(d)
 
+    # End devices rated faster than the switch/router port they ultimately
+    # connect to -- e.g. a NAS with a 10G NIC patched into a switch port
+    # that's only rated 1G, so it can never actually run faster than that.
+    # Only considers real, rated end-device ports (not another switch/
+    # router -- that's an uplink, a different concern; not Patch Panel or
+    # Internet, which aren't real rated interfaces; not virtual-switch
+    # member ports, which have no speed of their own). The trace is walked
+    # past any patch panels in between (pure pass-through, so "ignored"
+    # same as everywhere else) to find the next real device; if that isn't
+    # a switch/router, or its port has no speed set to compare against,
+    # there's nothing to flag.
+    speed_mismatches = []
+    for p in all_ports:
+        if not p["speed"] or p["virtual_switch_id"]:
+            continue
+        if p["device_role"] in ("Patch Panel", "Internet") or p["device_role"] in db.VLAN_POE_CAPABLE_ROLES:
+            continue
+        target = None
+        for hop in trace(conn, p["id"]):
+            if hop["device_role"] == "Patch Panel":
+                continue
+            target = hop
+            break
+        if not target or target["device_role"] not in db.VLAN_POE_CAPABLE_ROLES or not target["speed"]:
+            continue
+        if SPEED_MBPS.get(p["speed"], 0) > SPEED_MBPS.get(target["speed"], 0):
+            speed_mismatches.append({
+                "device_id": p["device_id"], "device_name": p["device_name"],
+                "device_role": p["device_role"],
+                "port_id": p["id"], "port_name": p["name"], "port_speed": p["speed"],
+                "target_device_id": target["device_id"], "target_device_name": target["device_name"],
+                "target_device_role": target["device_role"],
+                "target_port_id": target["port_id"], "target_port_name": target["port_name"],
+                "target_port_speed": target["speed"],
+            })
+
     return {
         "missing_site": missing_site,
         "missing_model": missing_model,
@@ -956,4 +992,5 @@ def data_quality_report(conn):
         "no_uplinks": no_uplinks,
         "no_ports": no_ports,
         "poe_unmet": poe_unmet,
+        "speed_mismatches": speed_mismatches,
     }
