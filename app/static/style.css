@@ -74,6 +74,20 @@ tr:last-child td { border-bottom:none; }
    accidentally shaded even where a table has no <thead> of its own. */
 tr:nth-child(even) td { background:var(--bg); }
 .port-name { font-weight:600; font-family: ui-monospace, monospace; font-size:12.5px; }
+/* Landing on a device via a "Connected to" chain link elsewhere (see
+   highlightPort() in app.js) -- a bright flash that settles into a
+   lingering tint, so the linked-to port is unmistakable at a glance but
+   the page doesn't look permanently "selected". A CSS animation already
+   wins over a plain (non-!important) static declaration like the
+   alternating-row-shading td background above regardless of selector
+   specificity, whichever row parity the highlighted port happens to land
+   on -- and "!important" *inside* a @keyframes block is invalid and
+   silently dropped by the browser, so don't add one here. */
+@keyframes portHighlightFade {
+  0% { background:rgba(59,130,246,0.35); }
+  100% { background:rgba(59,130,246,0.14); }
+}
+.port-highlight { animation:portHighlightFade 2.2s ease-out forwards; }
 
 /* Canonical styling for every in-app "click to jump to a device" link.
    Put class="link" directly on the <a> itself wherever one of these is

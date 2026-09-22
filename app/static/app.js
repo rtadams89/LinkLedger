@@ -204,7 +204,7 @@ async function renderView(state) {
   // would land you back on it.
   document.getElementById("tabDevice").style.display = lastViewedDeviceId ? "" : "none";
 
-  if (tab === "device" && state.id) await renderDeviceView(state.id);
+  if (tab === "device" && state.id) await renderDeviceView(state.id, state.port);
   else if (tab === "path") await renderPathFinder();
   else if (tab === "reports") await renderReportsView();
   else await renderBrowseHome();
@@ -217,22 +217,31 @@ async function renderView(state) {
 // device link in the app is built from deviceHref()/deviceLinkClick()
 // below so this stays true everywhere a device is linked to, not just on
 // whatever page happens to be open when you copy the address bar.
+// state.port (optional) is the id of a specific port on that device to
+// scroll to and highlight on arrival -- e.g. clicking a hop in another
+// device's "Connected to" chain. It rides along in the URL (?port=<id>)
+// the same way state.id does, so it survives a bookmark/share, a
+// middle-click into a new tab, and back/forward, not just the initial
+// click.
 function urlForState(state) {
-  return state && state.tab === "device" && state.id
-    ? `${location.pathname}?device=${state.id}`
-    : location.pathname;
+  if (!(state && state.tab === "device" && state.id)) return location.pathname;
+  return `${location.pathname}?device=${state.id}${state.port ? `&port=${state.port}` : ""}`;
 }
 
-// Reads ?device=<id> off the URL the app was loaded with, so a bookmarked
-// or shared link (or a middle-click/ctrl-click on a device link, which
-// opens this same URL in a fresh tab) lands directly on that device
+// Reads ?device=<id>&port=<id> off the URL the app was loaded with, so a
+// bookmarked or shared link (or a middle-click/ctrl-click on a device
+// link, which opens this same URL in a fresh tab) lands directly on that
+// device -- and, if a port was specified, scrolled to and highlighted --
 // instead of always starting at Browse devices. An invalid or deleted id
 // isn't special-cased here -- renderDeviceView() already shows a graceful
 // "this device no longer exists" state for that, same as landing on one
 // via back/forward.
 function initialStateFromUrl() {
-  const id = new URLSearchParams(location.search).get("device");
-  return id && /^\d+$/.test(id) ? { tab: "device", id: Number(id) } : { tab: "browse" };
+  const params = new URLSearchParams(location.search);
+  const id = params.get("device");
+  if (!(id && /^\d+$/.test(id))) return { tab: "browse" };
+  const port = params.get("port");
+  return { tab: "device", id: Number(id), port: port && /^\d+$/.test(port) ? Number(port) : undefined };
 }
 
 // The href for a link to a device -- pair with deviceLinkClick() on the
@@ -240,9 +249,11 @@ function initialStateFromUrl() {
 // navigation, while right-click / middle-click / ctrl-click fall through
 // to the browser's own "open in new tab" handling of the real href
 // instead of doing nothing, which is all a bare onclick with no href can
-// ever offer.
-function deviceHref(id) {
-  return `${location.pathname}?device=${id}`;
+// ever offer. Pass portId when the link is to a specific port on that
+// device (e.g. one hop of a "Connected to" chain) so arriving there
+// scrolls to and highlights that exact port instead of just the device.
+function deviceHref(id, portId) {
+  return `${location.pathname}?device=${id}${portId ? `&port=${portId}` : ""}`;
 }
 
 // Click handler for every device link built from deviceHref() above.
@@ -250,11 +261,11 @@ function deviceHref(id) {
 // right-click's "open in new tab" fall through to the browser's normal
 // handling of the anchor's real href; only intercepts a plain left-click
 // to do the instant in-app navigation instead of a full page reload.
-function deviceLinkClick(event, id) {
+function deviceLinkClick(event, id, portId) {
   if (event.defaultPrevented || event.button !== 0 ||
       event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  viewDevice(id);
+  viewDevice(id, portId);
 }
 
 async function navigateTo(state, opts) {
@@ -266,7 +277,11 @@ async function navigateTo(state, opts) {
   }
   await renderView(state);
   history[opts.replace ? "replaceState" : "pushState"]({ ...state, scrollY: 0 }, "", urlForState(state));
-  window.scrollTo(0, 0);
+  // Landing on a specific highlighted port (state.port) already scrolls
+  // itself into view from inside renderDeviceView() -- jumping to (0,0)
+  // right after that would just undo it, so skip the usual "new view
+  // always starts at the top" behavior for that one case.
+  if (!(state.tab === "device" && state.port)) window.scrollTo(0, 0);
 }
 
 function showTab(which) {
@@ -393,7 +408,7 @@ function chainHTML(trace, effectiveSpeed, effectiveVlans) {
       return `<span class="arrow">&rarr;</span> <a class="link" href="${deviceHref(h.device_id)}" title="${esc(h.device_name)}" onclick="deviceLinkClick(event, ${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${kind}${via})</span>`;
     }
     const label = cleanPortLabel(h.port_name);
-    return `<span class="arrow">&rarr;</span> <a class="link" href="${deviceHref(h.device_id)}" title="${esc(h.device_name)}" onclick="deviceLinkClick(event, ${h.device_id})">${esc(h.device_name)}</a> <span class="via">(${esc(label)})</span>`;
+    return `<span class="arrow">&rarr;</span> <a class="link" href="${deviceHref(h.device_id, h.port_id)}" title="${esc(h.device_name)}" onclick="deviceLinkClick(event, ${h.device_id}, ${h.port_id})">${esc(h.device_name)}</a> <span class="via">(${esc(label)})</span>`;
   }).join(" ");
   const extras = `${speedTag(effectiveSpeed)}${vlanTag(effectiveVlans)}`;
   return `${path}${extras ? " " + extras : ""}`;
@@ -440,11 +455,13 @@ function lagRows(d) {
 
 // Navigate TO a device -- from a search result, a device chip, a link in a
 // port's connection chain, an uplink/member row, a report, whatever. Pushes
-// a history entry and scrolls to top; see the "Tabs / views" section above.
-async function viewDevice(id) {
+// a history entry and scrolls to top (or, if portId is given, to that
+// specific port -- see renderDeviceView()); see the "Tabs / views" section
+// above.
+async function viewDevice(id, portId) {
   searchInput.value = "";
   resultsBox.classList.remove("show");
-  await navigateTo({ tab: "device", id });
+  await navigateTo({ tab: "device", id, port: portId || undefined });
 }
 
 // Re-render the currently-open device's page in place after an edit made
@@ -457,7 +474,7 @@ async function refreshCurrentDevice() {
   if (currentDeviceId) await renderDeviceView(currentDeviceId);
 }
 
-async function renderDeviceView(id) {
+async function renderDeviceView(id, highlightPortId) {
   let d;
   try {
     d = await api(`/api/devices/${id}`);
@@ -509,8 +526,8 @@ async function renderDeviceView(id) {
       const rear = rearMap[n], front = frontMap[n];
       return `<tr>
         <td class="port-name">Port ${n}</td>
-        <td class="chain">device side ${rear ? chainHTML(rear.trace, rear.effective_speed, rear.effective_vlans) + portActions(rear, d.role) : "—"}</td>
-        <td class="chain">switch side ${front ? chainHTML(front.trace, front.effective_speed, front.effective_vlans) + portActions(front, d.role) : "—"}</td>
+        <td class="chain"${rear ? ` data-port-cell="${rear.id}"` : ""}>device side ${rear ? chainHTML(rear.trace, rear.effective_speed, rear.effective_vlans) + portActions(rear, d.role) : "—"}</td>
+        <td class="chain"${front ? ` data-port-cell="${front.id}"` : ""}>switch side ${front ? chainHTML(front.trace, front.effective_speed, front.effective_vlans) + portActions(front, d.role) : "—"}</td>
       </tr>`;
     }).join("");
     portRows = `<table><tr><th>Port</th><th>Device side (rear)</th><th>Switch side (front)</th></tr>${portRows}</table>`;
@@ -541,7 +558,7 @@ async function renderDeviceView(id) {
     extraButtons = `<button class="btn small admin-only" onclick="openPatchPanelModal(${d.id}, ${nextStart})">+ Add paired ports</button>`; }
   } else {
     portRows = `<table><tr><th>Port / NIC</th><th>Connected to</th><th></th></tr>` +
-      d.ports.map(p => `<tr>
+      d.ports.map(p => `<tr data-port-row="${p.id}">
         <td class="port-name">${esc(p.name)} ${speedTag(p.speed)}${VLAN_POE_CAPABLE_ROLES.includes(d.role) ? poeSupplyTag(p.poe_supply) + vlanTag(p.vlans) : (p.virtual_switch_id ? vlanTag(p.vlans) : "")}${lagTag(p.lag_name)}</td>
         <td class="chain">${chainHTML(p.trace, p.effective_speed, p.effective_vlans)} ${poeNeedTag(d.poe_required, p.poe_supplied)}</td>
         <td>${portActions(p, d.role)}</td>
@@ -570,6 +587,24 @@ async function renderDeviceView(id) {
       ${extraButtons ? `<div style="margin-top:12px; display:flex; gap:8px;" class="print-hide">${extraButtons}</div>` : ""}
     </div>`;
   applyRoleVisibility();
+  if (highlightPortId) highlightPort(highlightPortId);
+}
+
+// Scrolls to and briefly highlights a specific port after arriving here
+// via a "Connected to" chain link elsewhere (see deviceHref()/
+// deviceLinkClick()'s portId, and chainHTML() which passes it through) --
+// otherwise landing on a busy device page leaves you hunting for which row
+// the link actually meant. A regular device's ports table tags each whole
+// <tr> with data-port-row; a patch panel's table instead tags each of the
+// two <td>s in a pair's row with data-port-cell, since "device side" and
+// "switch side" can be two unrelated connections and highlighting the
+// whole row would be ambiguous about which one was actually linked to.
+function highlightPort(portId) {
+  const row = document.querySelector(`[data-port-row="${portId}"]`);
+  const target = row || document.querySelector(`[data-port-cell="${portId}"]`);
+  if (!target) return;
+  (row ? [...row.children] : [target]).forEach(el => el.classList.add("port-highlight"));
+  target.scrollIntoView({ block: "center" });
 }
 
 function updateDeviceTabLabel(name) {
