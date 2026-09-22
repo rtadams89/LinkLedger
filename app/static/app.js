@@ -497,9 +497,11 @@ async function renderDeviceView(id) {
     extraButtons = "";
   } else if (isPanel) {
     const rearMap = {}, frontMap = {};
+    const strayPorts = [];
     d.ports.forEach(p => {
       const m = p.name.match(/^(\d+) \((rear|front)\)$/);
       if (m) (m[2] === "rear" ? rearMap : frontMap)[m[1]] = p;
+      else strayPorts.push(p);
     });
     const nums = [...new Set([...Object.keys(rearMap), ...Object.keys(frontMap)])]
       .sort((a, b) => Number(a) - Number(b));
@@ -512,6 +514,22 @@ async function renderDeviceView(id) {
       </tr>`;
     }).join("");
     portRows = `<table><tr><th>Port</th><th>Device side (rear)</th><th>Switch side (front)</th></tr>${portRows}</table>`;
+    // Ports whose name doesn't match "N (front)"/"N (rear)" can't be shown
+    // as a pair above -- most often leftovers from adding a port with the
+    // generic "+ Add port(s)" flow instead of "+ Add paired ports" (wrong
+    // name, and never linked via pair_port_id either). Surface them here,
+    // with the normal edit/delete actions, so they're at least visible and
+    // fixable instead of silently stuck in the database forever.
+    if (strayPorts.length) {
+      portRows += `
+        <div class="device-header" style="margin-top:16px;"><strong>Other ports</strong>
+          <span class="note">names that don't match this panel's "N (front)" / "N (rear)" pattern, so they can't show up as a pair above -- rename to fix, or delete and re-add with "+ Add paired ports"</span>
+        </div>
+        <table><tr><th>Name</th><th></th></tr>${strayPorts.map(p => `<tr>
+          <td class="port-name">${esc(p.name)}</td>
+          <td>${portActions(p, d.role)}</td>
+        </tr>`).join("")}</table>`;
+    }
     // Deliberately no generic "+ Add port(s)" button here -- every port on
     // a patch panel is one side of a front/rear pair, and that flow can't
     // produce one: it won't set pair_port_id (so trace() can't pass
