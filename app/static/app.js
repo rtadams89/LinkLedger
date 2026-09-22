@@ -217,9 +217,23 @@ async function renderView(state) {
 // device link in the app is built from deviceHref()/deviceLinkClick()
 // below so this stays true everywhere a device is linked to, not just on
 // whatever page happens to be open when you copy the address bar.
-// state.port (optional) is the id of a specific port on that device to
-// scroll to and highlight on arrival -- e.g. clicking a hop in another
-// device's "Connected to" chain. It rides along in the URL (?port=<id>)
+// Normalizes a portId argument (see deviceHref() below) -- a single id, an
+// array of ids, or already a comma-joined string -- down to one
+// comma-joined string ("" if there's nothing to highlight). A single
+// patch panel *segment* of a Path finder route legitimately covers two
+// ports (rear + front of the same numbered pass-through), so everywhere a
+// portId is threaded through from here on it's really "one or more port
+// ids", always carried as this same comma-joined string form.
+function portIdsParam(portId) {
+  if (portId === undefined || portId === null || portId === "") return "";
+  const ids = Array.isArray(portId) ? portId : [portId];
+  return ids.filter(x => x !== null && x !== undefined).join(",");
+}
+
+// state.port (optional) is one or more port ids (comma-joined, see
+// portIdsParam() above) on that device to scroll to and highlight on
+// arrival -- e.g. clicking a hop in another device's "Connected to" chain
+// or a Path finder segment. It rides along in the URL (?port=<id>[,<id>])
 // the same way state.id does, so it survives a bookmark/share, a
 // middle-click into a new tab, and back/forward, not just the initial
 // click.
@@ -228,20 +242,20 @@ function urlForState(state) {
   return `${location.pathname}?device=${state.id}${state.port ? `&port=${state.port}` : ""}`;
 }
 
-// Reads ?device=<id>&port=<id> off the URL the app was loaded with, so a
-// bookmarked or shared link (or a middle-click/ctrl-click on a device
-// link, which opens this same URL in a fresh tab) lands directly on that
-// device -- and, if a port was specified, scrolled to and highlighted --
-// instead of always starting at Browse devices. An invalid or deleted id
-// isn't special-cased here -- renderDeviceView() already shows a graceful
-// "this device no longer exists" state for that, same as landing on one
-// via back/forward.
+// Reads ?device=<id>&port=<id>[,<id>...] off the URL the app was loaded
+// with, so a bookmarked or shared link (or a middle-click/ctrl-click on a
+// device link, which opens this same URL in a fresh tab) lands directly on
+// that device -- and, if port(s) were specified, scrolled to and
+// highlighted -- instead of always starting at Browse devices. An invalid
+// or deleted id isn't special-cased here -- renderDeviceView() already
+// shows a graceful "this device no longer exists" state for that, same as
+// landing on one via back/forward.
 function initialStateFromUrl() {
   const params = new URLSearchParams(location.search);
   const id = params.get("device");
   if (!(id && /^\d+$/.test(id))) return { tab: "browse" };
   const port = params.get("port");
-  return { tab: "device", id: Number(id), port: port && /^\d+$/.test(port) ? Number(port) : undefined };
+  return { tab: "device", id: Number(id), port: port && /^\d+(,\d+)*$/.test(port) ? port : undefined };
 }
 
 // The href for a link to a device -- pair with deviceLinkClick() on the
@@ -249,11 +263,13 @@ function initialStateFromUrl() {
 // navigation, while right-click / middle-click / ctrl-click fall through
 // to the browser's own "open in new tab" handling of the real href
 // instead of doing nothing, which is all a bare onclick with no href can
-// ever offer. Pass portId when the link is to a specific port on that
-// device (e.g. one hop of a "Connected to" chain) so arriving there
-// scrolls to and highlights that exact port instead of just the device.
+// ever offer. Pass portId (a single id, or an array -- see portIdsParam())
+// when the link is to specific port(s) on that device (e.g. one hop of a
+// "Connected to" chain, or a Path finder segment) so arriving there scrolls
+// to and highlights those exact port(s) instead of just the device.
 function deviceHref(id, portId) {
-  return `${location.pathname}?device=${id}${portId ? `&port=${portId}` : ""}`;
+  const p = portIdsParam(portId);
+  return `${location.pathname}?device=${id}${p ? `&port=${p}` : ""}`;
 }
 
 // Click handler for every device link built from deviceHref() above.
@@ -454,14 +470,15 @@ function lagRows(d) {
 }
 
 // Navigate TO a device -- from a search result, a device chip, a link in a
-// port's connection chain, an uplink/member row, a report, whatever. Pushes
-// a history entry and scrolls to top (or, if portId is given, to that
-// specific port -- see renderDeviceView()); see the "Tabs / views" section
-// above.
+// port's connection chain, an uplink/member row, a Path finder segment, a
+// report, whatever. Pushes a history entry and scrolls to top (or, if
+// portId is given -- a single id or an array, see portIdsParam() above --
+// to that specific port/ports; see renderDeviceView()); see the "Tabs /
+// views" section above.
 async function viewDevice(id, portId) {
   searchInput.value = "";
   resultsBox.classList.remove("show");
-  await navigateTo({ tab: "device", id, port: portId || undefined });
+  await navigateTo({ tab: "device", id, port: portIdsParam(portId) || undefined });
 }
 
 // Re-render the currently-open device's page in place after an edit made
@@ -587,24 +604,35 @@ async function renderDeviceView(id, highlightPortId) {
       ${extraButtons ? `<div style="margin-top:12px; display:flex; gap:8px;" class="print-hide">${extraButtons}</div>` : ""}
     </div>`;
   applyRoleVisibility();
-  if (highlightPortId) highlightPort(highlightPortId);
+  if (highlightPortId) highlightPorts(highlightPortId);
 }
 
-// Scrolls to and briefly highlights a specific port after arriving here
-// via a "Connected to" chain link elsewhere (see deviceHref()/
-// deviceLinkClick()'s portId, and chainHTML() which passes it through) --
-// otherwise landing on a busy device page leaves you hunting for which row
-// the link actually meant. A regular device's ports table tags each whole
-// <tr> with data-port-row; a patch panel's table instead tags each of the
-// two <td>s in a pair's row with data-port-cell, since "device side" and
-// "switch side" can be two unrelated connections and highlighting the
-// whole row would be ambiguous about which one was actually linked to.
-function highlightPort(portId) {
-  const row = document.querySelector(`[data-port-row="${portId}"]`);
-  const target = row || document.querySelector(`[data-port-cell="${portId}"]`);
-  if (!target) return;
-  (row ? [...row.children] : [target]).forEach(el => el.classList.add("port-highlight"));
-  target.scrollIntoView({ block: "center" });
+// Scrolls to and briefly highlights one or more specific ports after
+// arriving here via a "Connected to" chain link or a Path finder segment
+// elsewhere (see deviceHref()/deviceLinkClick()'s portId, and
+// portIdsParam() above for the single-id-or-array-or-comma-string forms
+// this accepts) -- otherwise landing on a busy device page leaves you
+// hunting for which row the link actually meant. A regular device's ports
+// table tags each whole <tr> with data-port-row; a patch panel's table
+// instead tags each of the two <td>s in a pair's row with data-port-cell,
+// since "device side" and "switch side" can be two unrelated connections
+// and highlighting the whole row would be ambiguous about which one was
+// actually linked to. A Path finder segment that passes straight through a
+// patch panel legitimately names both sides of the same numbered pair (the
+// port it comes in on and the one it goes out on) -- both get highlighted,
+// same as they'd both show as "connected" if you looked at that row
+// on its own.
+function highlightPorts(portIds) {
+  const ids = (Array.isArray(portIds) ? portIds : String(portIds).split(","))
+    .map(x => String(x).trim()).filter(Boolean);
+  let scrolled = false;
+  ids.forEach(portId => {
+    const row = document.querySelector(`[data-port-row="${portId}"]`);
+    const target = row || document.querySelector(`[data-port-cell="${portId}"]`);
+    if (!target) return;
+    (row ? [...row.children] : [target]).forEach(el => el.classList.add("port-highlight"));
+    if (!scrolled) { target.scrollIntoView({ block: "center" }); scrolled = true; }
+  });
 }
 
 function updateDeviceTabLabel(name) {
@@ -782,8 +810,15 @@ function pathSegmentHTML(seg, isFirst, isLast) {
   const poeBits = seg.ports.filter(p => p.poe_supply).length
     ? poeSupplyTag(true)
     : "";
+  // A regular hop's segment has one real port; a patch-panel pass-through
+  // segment has two (the rear side it comes in on and the front side it
+  // goes out on, same numbered pair) -- an AP Group / Virtual Switch hop
+  // has none (port_id is null). Passing all of a segment's real port ids
+  // through highlights that whole pass-through pair on arrival, not just
+  // whichever side happened to be listed first; see highlightPorts().
+  const portIds = seg.ports.map(p => p.port_id).filter(id => id !== null && id !== undefined);
   return `<div class="path-hop">
-    <div class="path-hop-device"><a class="link" href="${deviceHref(seg.device_id)}" title="${esc(seg.device_name)}" onclick="deviceLinkClick(event, ${seg.device_id})">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
+    <div class="path-hop-device"><a class="link" href="${deviceHref(seg.device_id, portIds)}" title="${esc(seg.device_name)}" onclick="deviceLinkClick(event, ${seg.device_id}, [${portIds.join(",")}])">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
     <div class="path-hop-port">${portDisplay} ${poeBits}</div>
   </div>`;
 }
