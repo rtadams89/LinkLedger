@@ -512,8 +512,15 @@ async function renderDeviceView(id) {
       </tr>`;
     }).join("");
     portRows = `<table><tr><th>Port</th><th>Device side (rear)</th><th>Switch side (front)</th></tr>${portRows}</table>`;
-    extraButtons = `<button class="btn small admin-only" onclick="openPortModal(${d.id}, '${d.role}')">+ Add port(s)</button>
-        <button class="btn small admin-only" onclick="openPatchPanelModal(${d.id})">+ Add N paired ports</button>`;
+    // Deliberately no generic "+ Add port(s)" button here -- every port on
+    // a patch panel is one side of a front/rear pair, and that flow can't
+    // produce one: it won't set pair_port_id (so trace() can't pass
+    // through the panel) and unless the name is typed exactly as
+    // "N (front)"/"N (rear)" the port won't even show up in the table
+    // above, which groups strictly by that pattern. "+ Add paired ports"
+    // is the only flow that gets both right.
+    { const nextStart = nums.length ? Math.max(...nums.map(Number)) + 1 : 1;
+    extraButtons = `<button class="btn small admin-only" onclick="openPatchPanelModal(${d.id}, ${nextStart})">+ Add paired ports</button>`; }
   } else {
     portRows = `<table><tr><th>Port / NIC</th><th>Connected to</th><th></th></tr>` +
       d.ports.map(p => `<tr>
@@ -926,12 +933,13 @@ async function submitPorts(deviceId) {
   }
 }
 
-function openPatchPanelModal(deviceId) {
+function openPatchPanelModal(deviceId, nextSuggestedStart) {
   renderModal(`
     <h3>Add paired patch panel ports</h3>
-    <p class="note">Creates N front/rear port pairs, pre-linked so traces pass straight through — e.g. 24 for a standard panel.</p>
+    <p class="note">Creates front/rear port pairs, pre-linked so traces pass straight through — e.g. 24 pairs starting at 1 for a standard panel. Adding more pairs to a panel that already has some? Set "Starting at" to the first new number — e.g. count 1, starting at 20 adds just a "20 (front)"/"20 (rear)" pair without touching your existing ports.</p>
     <div id="panelModalError"></div>
-    <div class="field"><label>Number of ports</label><input type="number" id="f_count" value="24" min="1" max="96"></div>
+    <div class="field"><label>Number of pairs to add</label><input type="number" id="f_count" value="24" min="1" max="96"></div>
+    <div class="field"><label>Starting at</label><input type="number" id="f_start" value="${nextSuggestedStart || 1}" min="1"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitPatchPanel(${deviceId})">Add</button>
@@ -940,10 +948,11 @@ function openPatchPanelModal(deviceId) {
 
 async function submitPatchPanel(deviceId) {
   const count = Number(document.getElementById("f_count").value);
+  const start = Number(document.getElementById("f_start").value) || 1;
   try {
-    await api(`/api/devices/${deviceId}/patch-panel`, { method: "POST", body: JSON.stringify({ count }) });
+    await api(`/api/devices/${deviceId}/patch-panel`, { method: "POST", body: JSON.stringify({ count, start }) });
     closeModal();
-    showToast(`Added ${count} paired ports`);
+    showToast(`Added ${count} paired port(s) starting at ${start}`);
     viewDevice(deviceId);
   } catch (e) {
     document.getElementById("panelModalError").innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;

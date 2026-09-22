@@ -212,12 +212,17 @@ def create_ports_bulk(conn, device_id: int, names: list[str], speed: str = "", p
     return [create_port(conn, device_id, n, speed=speed, poe_supply=poe_supply) for n in names]
 
 
-def create_patch_panel_ports(conn, device_id: int, count: int):
+def create_patch_panel_ports(conn, device_id: int, count: int, start: int = 1):
     """Convenience: create N front/rear port pairs for a patch panel,
-    pre-paired so traces automatically pass through them."""
+    pre-paired so traces automatically pass through them. `start` lets this
+    be used again later to add more pairs to a panel that already has some
+    (e.g. numbers 1-11 exist, add one more pair at 20) without colliding
+    with the existing ones -- the loop always used to start at 1, so a
+    second call on a non-empty panel would immediately fail on '1 (rear)'
+    already existing and create nothing at all."""
     get_device(conn, device_id)
     created = []
-    for i in range(1, count + 1):
+    for i in range(start, start + count):
         rear = create_port(conn, device_id, f"{i} (rear)")
         front = create_port(conn, device_id, f"{i} (front)")
         conn.execute("UPDATE ports SET pair_port_id = ? WHERE id = ?", (front["id"], rear["id"]))

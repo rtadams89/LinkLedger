@@ -174,6 +174,7 @@ class PortsBulkIn(BaseModel):
 
 class PatchPanelIn(BaseModel):
     count: int
+    start: int = 1
 
 
 class PortUpdate(BaseModel):
@@ -308,7 +309,7 @@ def api_create_ports_bulk(device_id: int, body: PortsBulkIn):
 
 @app.post("/api/devices/{device_id}/patch-panel", dependencies=[Depends(require_admin)])
 def api_create_patch_panel(device_id: int, body: PatchPanelIn):
-    pairs = handle(crud.create_patch_panel_ports, device_id, body.count)
+    pairs = handle(crud.create_patch_panel_ports, device_id, body.count, start=body.start)
     return {"pairs_created": len(pairs)}
 
 
