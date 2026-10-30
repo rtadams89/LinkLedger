@@ -14,7 +14,7 @@ build/
 dist/
 *.egg-info/
 
-# Local app data -- never commit a real topology database or backup
+# Local app data
 /data/
 *.db
 *.db-journal

@@ -16,30 +16,20 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .autocomplete { position:relative; }
 .results { position:absolute; top:calc(100% + 4px); left:0; right:0; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.08); max-height:320px; overflow:auto; z-index:20; display:none; }
 .results.show { display:block; }
-/* Narrow fields (e.g. Path finder's Device A/B pickers, sitting alongside
-   several other fields in one row) still get a dropdown wide enough for a
-   long device/hostname to read comfortably, rather than being squeezed
-   down to the picker's own cramped width. */
+/* A wider dropdown for narrow fields (e.g. Path finder's Device A/B pickers). */
 .results.wide { min-width:420px; }
-/* .result-item and .device-chip below are real <a href> links (so
-   right-click/middle-click/ctrl-click open a device in a new tab like any
-   ordinary link -- see deviceHref()/deviceLinkClick() in app.js), not
-   plain divs/buttons -- reset the browser's default anchor color/underline
-   so they still just look like the same plain clickable rows/chips. */
+/* .result-item and .device-chip below are real <a href> links; reset the
+   browser's default anchor styling so they look like plain clickable rows/chips. */
 .result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; color:inherit; text-decoration:none; }
 .result-item:hover { background:#f8fafc; }
-/* Belt-and-suspenders for a name too long even for the widened dropdown
-   above (or any other narrow spot .results is used) -- wrap it onto a
-   second line instead of forcing the whole row into horizontal scroll.
-   min-width:0 is required for a flex item to actually be allowed to
-   shrink/wrap rather than pushing the row wider. */
+/* Wraps a name too long for the row onto a second line instead of
+   horizontal scroll. min-width:0 lets the flex item shrink/wrap. */
 .result-item span:first-child { overflow-wrap:anywhere; min-width:0; }
 .tag { font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; white-space:nowrap; }
 .tabs { display:flex; gap:8px; margin-bottom:16px; }
 .tab-btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; color:var(--muted); }
 .tab-btn.active { background:var(--text); color:white; border-color:var(--text); }
-/* The "Device" tab's label is a live device name (can be a long FQDN) --
-   truncate instead of letting it stretch the tab row. */
+/* Truncates the Device tab's label instead of stretching the tab row. */
 #tabDevice { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; }
 .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
 .device-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
@@ -47,11 +37,8 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .spacer { flex:1; }
 
 /* Reports tab: each report is a native <details>/<summary> pair (see
-   reportSection() in app.js) so it collapses/expands with zero JS -- the
-   browser handles the click-to-toggle itself. Collapsed by default every
-   time the Reports tab is opened; only the title + count in the summary
-   are visible while collapsed. The summary reuses .device-header's flex
-   layout, so the disclosure triangle is the only thing added here. */
+   reportSection() in app.js). The summary reuses .device-header's flex
+   layout; a disclosure triangle is the only thing added here. */
 .report-card > summary { cursor:pointer; list-style:none; margin-bottom:0; }
 .report-card > summary::-webkit-details-marker { display:none; }
 .report-card > summary::before {
@@ -67,41 +54,21 @@ table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; 
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
 td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
-/* Alternating row shading -- purely a readability aid for tables with more
-   than a couple of rows (port lists especially), so it's safe to apply
-   globally rather than opting each table in one at a time. Targets td
-   (not tr) so a header row -- always <th>, never <td> -- is never
-   accidentally shaded even where a table has no <thead> of its own. */
+/* Alternating row shading. Targets td (not tr) so a header row, always
+   <th>, is never shaded. */
 tr:nth-child(even) td { background:var(--bg); }
 .port-name { font-weight:600; font-family: ui-monospace, monospace; font-size:12.5px; }
-/* Landing on a device via a "Connected to" chain link elsewhere (see
-   highlightPort() in app.js) -- a bright flash that settles into a
-   lingering tint, so the linked-to port is unmistakable at a glance but
-   the page doesn't look permanently "selected". A CSS animation already
-   wins over a plain (non-!important) static declaration like the
-   alternating-row-shading td background above regardless of selector
-   specificity, whichever row parity the highlighted port happens to land
-   on -- and "!important" *inside* a @keyframes block is invalid and
-   silently dropped by the browser, so don't add one here. */
+/* Highlights a port linked to from elsewhere (see highlightPorts() in
+   app.js): a bright flash that settles into a lingering tint. */
 @keyframes portHighlightFade {
   0% { background:rgba(59,130,246,0.35); }
   100% { background:rgba(59,130,246,0.14); }
 }
 .port-highlight { animation:portHighlightFade 2.2s ease-out forwards; }
 
-/* Canonical styling for every in-app "click to jump to a device" link.
-   Put class="link" directly on the <a> itself wherever one of these is
-   built, rather than relying on some ancestor's class (a table cell, a
-   card, whatever) to happen to carry the styling -- that indirection is
-   exactly what let several of these render as unstyled plain text in the
-   past (patch panel port chains, Virtual Switch/AP Group uplinks &
-   members, the Reports tables) simply because the container they were
-   dropped into didn't have the right class. One rule, applied at the
-   source, can't go stale that way. Every one of these carries a real
-   href (see deviceHref() in app.js) alongside its onclick, so a normal
-   click still does the fast in-app navigation but right-click / middle-
-   click / ctrl-click still get real "open in new tab" behavior from the
-   browser, the same as any ordinary link. */
+/* Styling for every in-app "click to jump to a device" link. Put
+   class="link" directly on the <a> itself, alongside its real href (see
+   deviceHref() in app.js) and onclick. */
 a.link { color:var(--blue); text-decoration:none; font-weight:600; cursor:pointer; }
 a.link:hover { text-decoration:underline; }
 .chain .via { color:var(--muted); font-size:11px; }
@@ -113,10 +80,7 @@ a.link:hover { text-decoration:underline; }
 .device-chip .chip-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .device-chip .role { display:block; font-weight:400; color:var(--muted); font-size:11px; margin-top:2px; }
 
-/* Long device names (FQDNs especially) shouldn't be able to force a box
-   wider than its container -- these truncate with an ellipsis (title
-   attribute on the element supplies the full-name tooltip on hover);
-   everything else just wraps mid-word rather than overflowing. */
+/* Truncates long device names with an ellipsis instead of overflowing. */
 .autocomplete input[type=text] { text-overflow:ellipsis; overflow:hidden; }
 .device-header h2 { overflow-wrap:anywhere; }
 .chain, .path-hop-device, td, .via { overflow-wrap:anywhere; }
@@ -180,10 +144,8 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
 .vlan-note-diff { background:#ffedd5; color:#c2410c; }
 .vlan-note-unknown { background:#f1f5f9; color:var(--muted); }
 
-/* Printing (device pages especially -- see "Print" button on a device's
-   card). Hidden on screen; @media print below both reveals this and
-   strips out everything that isn't useful on paper (nav chrome, search,
-   tabs, the "All devices" grid, and any buttons/action icons). */
+/* Printing (see "Print" button on a device's card). Hidden on screen;
+   @media print below reveals this and strips non-paper UI. */
 .print-meta { display:none; }
 
 @media print {

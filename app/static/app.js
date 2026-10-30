@@ -1,24 +1,13 @@
 // ---------------------------------------------------------------------------
-// Browser back/forward -- this is a single-page app with no real page loads,
-// so the History API is used to give the mouse/keyboard back and forward
-// buttons a real place to go: through LinkLedger's own view history (Device
-// A -> Device B -> back -> Device A), the same way they'd work on any
-// multi-page site. Every navigation (see navigateTo() below) pushes one
-// history entry describing that view; popstate re-renders whatever view the
-// browser lands back on. Running out of app history and pressing back again
-// leaves LinkLedger entirely, same as leaving any other site -- that's the
-// correct trade-off for real back-button support, not a bug.
-//
-// Each history entry also carries the scrollY the page was at when you
-// navigated *away* from it (stamped on just before the new view renders),
-// so back/forward restores your place the way normal browser navigation
-// does; navigating forward to a new view always starts at the top.
+// Browser back/forward -- uses the History API to give the back/forward
+// buttons a real place to go through LinkLedger's own view history. Every
+// navigation (see navigateTo() below) pushes one history entry; popstate
+// re-renders whatever view the browser lands back on. Each history entry
+// also carries the scrollY the page was at when navigated away from, so
+// back/forward restores scroll position.
 // ---------------------------------------------------------------------------
-// Tell the browser not to do its own scroll-position guessing on
-// popstate -- with pushState-driven views like this, its guess races our
-// own render + scrollTo below and can win, producing a visible flicker to
-// the wrong position before landing on the right one. "manual" leaves
-// scroll restoration entirely to the code below.
+// Leaves scroll restoration on popstate entirely to the code below instead
+// of the browser's own guess.
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
 window.addEventListener("popstate", (e) => {
@@ -36,9 +25,7 @@ async function api(path, options) {
     ...options,
   });
   if (res.status === 401 && path !== "/api/whoami") {
-    // Not signed in (or the session expired/was invalidated elsewhere) --
-    // reload so the bootstrap whoami check shows the login screen instead
-    // of leaving the page in a half-broken, half-authenticated state.
+    // Reload so the bootstrap whoami check shows the login screen.
     location.reload();
     throw new Error("not signed in");
   }
@@ -96,15 +83,9 @@ async function logout() {
   location.reload();
 }
 
-// Password changes, backup/restore, and reset-data all moved to the
-// Settings page (settings.html / settings.js) in v1.8.0 -- this file no
-// longer has modals for any of them.
-
 function applyRoleVisibility() {
-  // .admin-only defaults to display:none in the stylesheet (fail closed).
-  // For admins we strip the class so elements fall back to their normal
-  // display; re-rendered content (device view, etc) gets the class fresh
-  // each time, so this needs to run after every dynamic re-render.
+  // .admin-only defaults to display:none in the stylesheet. For admins we
+  // strip the class so elements fall back to their normal display.
   document.querySelectorAll(".admin-only").forEach(el => {
     if (isAdmin()) el.classList.remove("admin-only");
     else el.style.display = "none";
@@ -120,13 +101,12 @@ function showToast(msg, isError) {
   showToast._t = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
-// Roles whose ports can be tagged with VLAN(s) and "Supplies PoE" -- kept
+// Roles whose ports can be tagged with VLAN(s) and "Supplies PoE". Kept
 // in sync with db.VLAN_POE_CAPABLE_ROLES on the backend.
 const VLAN_POE_CAPABLE_ROLES = ["Switch", "Router/Firewall"];
 
-// Roles with no physical ports of their own -- they bridge together
-// uplinks (real ports elsewhere) and members (ports that join them
-// instead of being cabled). Kept in sync with db.VIRTUAL_SWITCH_ROLES.
+// Roles with no physical ports of their own. Kept in sync with
+// db.VIRTUAL_SWITCH_ROLES on the backend.
 const VIRTUAL_SWITCH_ROLES = ["AP Group", "Virtual Switch"];
 
 const ROLE_COLORS = {
@@ -151,12 +131,8 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-// Same as esc(), plus a <wbr> (word-break opportunity) after every "." and
-// "-" -- for a long dotted hostname like a device's mDNS name, this lets a
-// cramped result-list row wrap at a sensible boundary ("some-device.
-// home.example.com") instead of splitting an arbitrary run of letters in
-// the middle. Only used for names in search-result rows, which are narrow
-// enough for this to matter; everywhere else just uses plain esc().
+// Same as esc(), plus a <wbr> (word-break opportunity) after every "."
+// and "-", so a long dotted hostname can wrap in a narrow result-list row.
 function escBreakable(s) {
   return esc(s).replace(/([.-])/g, "$1<wbr>");
 }
@@ -164,21 +140,15 @@ function escBreakable(s) {
 // ---------------------------------------------------------------------------
 // Tabs / views
 //
-// Four views: "browse" (the searchable/filterable device grid -- always
-// just the grid, never a specific device), "device" (one device's detail
-// page), "path" (path finder), "reports". Browse and Device are
-// deliberately separate views with their own containers -- a device page
-// used to be rendered inside the Browse tab's own container, which is why
-// it also used to drag along a redundant mini "All devices" grid at the
-// bottom; splitting them out removes the need for that entirely.
+// Four views: "browse" (the device grid), "device" (one device's detail
+// page), "path" (path finder), "reports".
 //
-// renderView() is the one function that actually draws a view -- it has no
-// history/scroll side effects, so it's safe to call from popstate. Every
-// user-initiated navigation goes through navigateTo() instead, which
-// additionally stamps the outgoing view's scroll position, renders the new
-// view, and pushes a history entry for it (see the popstate listener up
-// top). Refreshing the currently-open device in place after an edit (add a
-// port, rename it, etc.) is neither of those -- see refreshCurrentDevice().
+// renderView() draws a view with no history/scroll side effects, so it's
+// safe to call from popstate. Every user-initiated navigation goes through
+// navigateTo() instead, which also stamps the outgoing view's scroll
+// position and pushes a history entry. Refreshing the currently-open
+// device in place after an edit is neither of those -- see
+// refreshCurrentDevice().
 // ---------------------------------------------------------------------------
 let currentDeviceId = null;
 let lastViewedDeviceId = null;
@@ -196,12 +166,7 @@ async function renderView(state) {
   document.getElementById("deviceView").style.display = tab === "device" ? "block" : "none";
   document.getElementById("pathView").style.display = tab === "path" ? "block" : "none";
   document.getElementById("reportsView").style.display = tab === "reports" ? "block" : "none";
-  // The Device tab only makes sense once a device has actually been
-  // viewed -- there's nothing to show it for on a brand-new session, so it
-  // stays hidden until then, and (once shown) stays visible/clickable from
-  // any other tab so you can always jump back to the last device you were
-  // looking at, the same way clicking a browser back-forward-history entry
-  // would land you back on it.
+  // Hidden until a device has been viewed at least once.
   document.getElementById("tabDevice").style.display = lastViewedDeviceId ? "" : "none";
 
   if (tab === "device" && state.id) await renderDeviceView(state.id, state.port);
@@ -210,46 +175,25 @@ async function renderView(state) {
   else await renderBrowseHome();
 }
 
-// The address bar always reflects the current device -- ?device=<id> when
-// the Device tab is open, no query string otherwise -- so the URL itself
-// can be bookmarked, pasted to someone else, or right-clicked/ctrl-clicked
-// to open in a new tab, the same as any normal multi-page site. Every
-// device link in the app is built from deviceHref()/deviceLinkClick()
-// below so this stays true everywhere a device is linked to, not just on
-// whatever page happens to be open when you copy the address bar.
-// Normalizes a portId argument (see deviceHref() below) -- a single id, an
-// array of ids, or already a comma-joined string -- down to one
-// comma-joined string ("" if there's nothing to highlight). A single
-// patch panel *segment* of a Path finder route legitimately covers two
-// ports (rear + front of the same numbered pass-through), so everywhere a
-// portId is threaded through from here on it's really "one or more port
-// ids", always carried as this same comma-joined string form.
+// Normalizes a portId argument (see deviceHref() below) -- a single id,
+// an array of ids, or already a comma-joined string -- down to one
+// comma-joined string ("" if there's nothing to highlight).
 function portIdsParam(portId) {
   if (portId === undefined || portId === null || portId === "") return "";
   const ids = Array.isArray(portId) ? portId : [portId];
   return ids.filter(x => x !== null && x !== undefined).join(",");
 }
 
-// state.port (optional) is one or more port ids (comma-joined, see
-// portIdsParam() above) on that device to scroll to and highlight on
-// arrival -- e.g. clicking a hop in another device's "Connected to" chain
-// or a Path finder segment. It rides along in the URL (?port=<id>[,<id>])
-// the same way state.id does, so it survives a bookmark/share, a
-// middle-click into a new tab, and back/forward, not just the initial
-// click.
+// The address bar reflects the current device as ?device=<id>, plus
+// ?port=<id>[,<id>] for state.port (one or more port ids, comma-joined,
+// see portIdsParam() above) to scroll to and highlight on arrival.
 function urlForState(state) {
   if (!(state && state.tab === "device" && state.id)) return location.pathname;
   return `${location.pathname}?device=${state.id}${state.port ? `&port=${state.port}` : ""}`;
 }
 
 // Reads ?device=<id>&port=<id>[,<id>...] off the URL the app was loaded
-// with, so a bookmarked or shared link (or a middle-click/ctrl-click on a
-// device link, which opens this same URL in a fresh tab) lands directly on
-// that device -- and, if port(s) were specified, scrolled to and
-// highlighted -- instead of always starting at Browse devices. An invalid
-// or deleted id isn't special-cased here -- renderDeviceView() already
-// shows a graceful "this device no longer exists" state for that, same as
-// landing on one via back/forward.
+// with, so a bookmarked or shared link lands directly on that device.
 function initialStateFromUrl() {
   const params = new URLSearchParams(location.search);
   const id = params.get("device");
@@ -258,25 +202,17 @@ function initialStateFromUrl() {
   return { tab: "device", id: Number(id), port: port && /^\d+(,\d+)*$/.test(port) ? port : undefined };
 }
 
-// The href for a link to a device -- pair with deviceLinkClick() on the
-// same element (see below) so a plain click still does the fast in-app
-// navigation, while right-click / middle-click / ctrl-click fall through
-// to the browser's own "open in new tab" handling of the real href
-// instead of doing nothing, which is all a bare onclick with no href can
-// ever offer. Pass portId (a single id, or an array -- see portIdsParam())
-// when the link is to specific port(s) on that device (e.g. one hop of a
-// "Connected to" chain, or a Path finder segment) so arriving there scrolls
-// to and highlights those exact port(s) instead of just the device.
+// The href for a link to a device; pair with deviceLinkClick() on the
+// same element. Pass portId (a single id, or an array -- see
+// portIdsParam()) to scroll to and highlight specific port(s) on arrival.
 function deviceHref(id, portId) {
   const p = portIdsParam(portId);
   return `${location.pathname}?device=${id}${p ? `&port=${p}` : ""}`;
 }
 
 // Click handler for every device link built from deviceHref() above.
-// Lets a modified click (middle-click, ctrl/cmd/shift/alt-click) or a
-// right-click's "open in new tab" fall through to the browser's normal
-// handling of the anchor's real href; only intercepts a plain left-click
-// to do the instant in-app navigation instead of a full page reload.
+// Lets a modified or right click fall through to the browser's normal
+// handling; only intercepts a plain left-click for in-app navigation.
 function deviceLinkClick(event, id, portId) {
   if (event.defaultPrevented || event.button !== 0 ||
       event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -287,16 +223,13 @@ function deviceLinkClick(event, id, portId) {
 async function navigateTo(state, opts) {
   opts = opts || {};
   if (!opts.replace && history.state) {
-    // Stamp how far down the page we'd scrolled onto the entry we're
-    // leaving, so a later "back" to it can restore that position.
+    // Stamp the scroll position onto the entry being left.
     history.replaceState({ ...history.state, scrollY: window.scrollY }, "", location.href);
   }
   await renderView(state);
   history[opts.replace ? "replaceState" : "pushState"]({ ...state, scrollY: 0 }, "", urlForState(state));
-  // Landing on a specific highlighted port (state.port) already scrolls
-  // itself into view from inside renderDeviceView() -- jumping to (0,0)
-  // right after that would just undo it, so skip the usual "new view
-  // always starts at the top" behavior for that one case.
+  // A highlighted port (state.port) already scrolls itself into view from
+  // inside renderDeviceView().
   if (!(state.tab === "device" && state.port)) window.scrollTo(0, 0);
 }
 
@@ -323,8 +256,7 @@ searchInput.addEventListener("input", async () => {
   }
   resultsBox.classList.add("show");
 });
-// Closes any open autocomplete dropdown (the main search bar, or a path
-// finder device field) when clicking outside its own wrapper.
+// Closes any open autocomplete dropdown when clicking outside its wrapper.
 document.addEventListener("click", (e) => {
   document.querySelectorAll(".autocomplete, .searchbar").forEach(wrap => {
     if (!wrap.contains(e.target)) {
@@ -405,9 +337,7 @@ function poeNeedTag(deviceRequiresPoe, supplied) {
 }
 
 // Short plain-text summary of what a port's trace currently ends at --
-// used in the Connect port modal's port pickers to label an already-in-use
-// port, so a device/port that's occupied can still be picked (and
-// overwritten, with a warning) instead of being disabled outright.
+// used in the Connect port modal's port pickers to label an in-use port.
 function connectedToLabel(trace) {
   if (!trace || !trace.length) return "";
   const last = trace[trace.length - 1];
@@ -469,24 +399,17 @@ function lagRows(d) {
     }</table>`;
 }
 
-// Navigate TO a device -- from a search result, a device chip, a link in a
-// port's connection chain, an uplink/member row, a Path finder segment, a
-// report, whatever. Pushes a history entry and scrolls to top (or, if
-// portId is given -- a single id or an array, see portIdsParam() above --
-// to that specific port/ports; see renderDeviceView()); see the "Tabs /
-// views" section above.
+// Navigates to a device. Pushes a history entry and scrolls to top, or
+// to the given port(s) if portId is passed (see portIdsParam() above).
 async function viewDevice(id, portId) {
   searchInput.value = "";
   resultsBox.classList.remove("show");
   await navigateTo({ tab: "device", id, port: portIdsParam(portId) || undefined });
 }
 
-// Re-render the currently-open device's page in place after an edit made
-// from it (add/edit/delete a port, rename the device, add an uplink or LAG,
-// connect/disconnect a cable, etc.) -- NOT a navigation, so no history entry
-// and no scroll-to-top; you stay exactly where you were on the page. A
-// no-op if a device page isn't what's currently open (e.g. a cable created
-// from the global "+ New cable" button while looking at the device grid).
+// Re-renders the currently-open device's page in place after an edit. Not
+// a navigation, so no history entry and no scroll-to-top. A no-op if a
+// device page isn't currently open.
 async function refreshCurrentDevice() {
   if (currentDeviceId) await renderDeviceView(currentDeviceId);
 }
@@ -496,9 +419,7 @@ async function renderDeviceView(id, highlightPortId) {
   try {
     d = await api(`/api/devices/${id}`);
   } catch (e) {
-    // Most likely landed here via browser back/forward onto a device
-    // that's since been deleted -- rather than an unhandled failure, show
-    // a way back instead of a blank page.
+    // Device no longer exists (e.g. via back/forward); show a way back.
     currentDeviceId = null;
     if (lastViewedDeviceId === id) lastViewedDeviceId = null;
     document.getElementById("tabDevice").style.display = lastViewedDeviceId ? "" : "none";
@@ -548,12 +469,8 @@ async function renderDeviceView(id, highlightPortId) {
       </tr>`;
     }).join("");
     portRows = `<table><tr><th>Port</th><th>Device side (rear)</th><th>Switch side (front)</th></tr>${portRows}</table>`;
-    // Ports whose name doesn't match "N (front)"/"N (rear)" can't be shown
-    // as a pair above -- most often leftovers from adding a port with the
-    // generic "+ Add port(s)" flow instead of "+ Add paired ports" (wrong
-    // name, and never linked via pair_port_id either). Surface them here,
-    // with the normal edit/delete actions, so they're at least visible and
-    // fixable instead of silently stuck in the database forever.
+    // Ports whose name doesn't match "N (front)"/"N (rear)" can't be
+    // shown as a pair above; surface them here with edit/delete actions.
     if (strayPorts.length) {
       portRows += `
         <div class="device-header" style="margin-top:16px;"><strong>Other ports</strong>
@@ -564,13 +481,8 @@ async function renderDeviceView(id, highlightPortId) {
           <td>${portActions(p, d.role)}</td>
         </tr>`).join("")}</table>`;
     }
-    // Deliberately no generic "+ Add port(s)" button here -- every port on
-    // a patch panel is one side of a front/rear pair, and that flow can't
-    // produce one: it won't set pair_port_id (so trace() can't pass
-    // through the panel) and unless the name is typed exactly as
-    // "N (front)"/"N (rear)" the port won't even show up in the table
-    // above, which groups strictly by that pattern. "+ Add paired ports"
-    // is the only flow that gets both right.
+    // No generic "+ Add port(s)" button here; "+ Add paired ports" is the
+    // only flow that produces a correctly named, paired port.
     { const nextStart = nums.length ? Math.max(...nums.map(Number)) + 1 : 1;
     extraButtons = `<button class="btn small admin-only" onclick="openPatchPanelModal(${d.id}, ${nextStart})">+ Add paired ports</button>`; }
   } else {
@@ -607,21 +519,11 @@ async function renderDeviceView(id, highlightPortId) {
   if (highlightPortId) highlightPorts(highlightPortId);
 }
 
-// Scrolls to and briefly highlights one or more specific ports after
-// arriving here via a "Connected to" chain link or a Path finder segment
-// elsewhere (see deviceHref()/deviceLinkClick()'s portId, and
-// portIdsParam() above for the single-id-or-array-or-comma-string forms
-// this accepts) -- otherwise landing on a busy device page leaves you
-// hunting for which row the link actually meant. A regular device's ports
-// table tags each whole <tr> with data-port-row; a patch panel's table
-// instead tags each of the two <td>s in a pair's row with data-port-cell,
-// since "device side" and "switch side" can be two unrelated connections
-// and highlighting the whole row would be ambiguous about which one was
-// actually linked to. A Path finder segment that passes straight through a
-// patch panel legitimately names both sides of the same numbered pair (the
-// port it comes in on and the one it goes out on) -- both get highlighted,
-// same as they'd both show as "connected" if you looked at that row
-// on its own.
+// Scrolls to and briefly highlights one or more specific ports (accepts
+// the single-id/array/comma-string forms from portIdsParam() above). A
+// regular device's ports table tags each whole <tr> with data-port-row; a
+// patch panel's table tags each <td> in a pair's row with data-port-cell,
+// since "device side" and "switch side" can be different connections.
 function highlightPorts(portIds) {
   const ids = (Array.isArray(portIds) ? portIds : String(portIds).split(","))
     .map(x => String(x).trim()).filter(Boolean);
@@ -707,10 +609,8 @@ async function renderPathFinder(selA, selB) {
   if (selB) await selectPathDeviceById("b", selB);
 }
 
-// Last-fetched device's ports for each side, kept around so
-// onPathPortChange can look up the chosen NIC's virtual_switch_id without
-// a round-trip -- populated by onPathDeviceChange whenever device A/B
-// changes.
+// Last-fetched device's ports for each side, so onPathPortChange can look
+// up the chosen NIC's virtual_switch_id without a round-trip.
 let PF_PORTS = { a: [], b: [] };
 
 async function onPathDeviceSearch(which) {
@@ -750,13 +650,10 @@ async function onPathDeviceChange(which) {
     sel.innerHTML = `<option value="">(no ports on this device)</option>`;
     return;
   }
-  // Devices with just one port can skip the extra click; anything with
-  // more than one forces an explicit pick rather than silently defaulting
-  // to whichever NIC happens to be first.
+  // Devices with more than one port require an explicit pick.
   const placeholder = d.ports.length > 1 ? `<option value="">Select a NIC...</option>` : "";
   sel.innerHTML = placeholder + d.ports.map(p => `<option value="${p.id}">${esc(cleanPortLabel(p.name))}</option>`).join("");
-  // A single-port device auto-fills the NIC without an extra click -- still
-  // run the wireless/virtual-link check for it, same as a manual pick.
+  // A single-port device auto-fills the NIC; still run the virtual-link check.
   if (d.ports.length === 1) onPathPortChange(which);
 }
 
@@ -765,15 +662,9 @@ function clearPathVia(which) {
 }
 
 // If the chosen NIC is a virtual link member of an AP Group / Virtual
-// Switch, offer a way to pin the search to one specific uplink instead of
-// leaving it to find_path() to pick whichever gives the shortest route
-// (see submitFindPath / pathfind.find_path). A no-op for a normal wired
-// NIC (no virtual_switch_id at all). If the virtual switch has only one
-// uplink on record, there's nothing to actually choose between -- but
-// it's still shown (disabled, that one uplink pre-filled) rather than
-// nothing, so it's clear at a glance which uplink the path goes through
-// and that this NIC IS recognized as wireless/virtual, rather than
-// looking like the feature just doesn't apply here.
+// Switch, offers a way to pin the search to one specific uplink. A no-op
+// for a normal wired NIC. If there's only one uplink on record, it's
+// still shown, disabled and pre-filled.
 async function onPathPortChange(which) {
   clearPathVia(which);
   const sel = document.getElementById(`pf_port${which.toUpperCase()}`);
@@ -799,9 +690,8 @@ async function onPathPortChange(which) {
 }
 
 function pathSegmentHTML(seg, isFirst, isLast) {
-  // Patch panels enter/exit on the (rear)/(front) suffix of the SAME
-  // number -- stripping it like elsewhere would show "21 -> 21", which
-  // looks like a no-op instead of the rear->front pass-through it is.
+  // Patch panels enter/exit on the (rear)/(front) suffix of the same
+  // number, so that suffix is kept rather than stripped like elsewhere.
   const isPanel = seg.device_role === "Patch Panel";
   const portLabels = seg.ports.map(p => isPanel ? p.port_name : cleanPortLabel(p.port_name));
   const portDisplay = portLabels.length > 1
@@ -811,11 +701,8 @@ function pathSegmentHTML(seg, isFirst, isLast) {
     ? poeSupplyTag(true)
     : "";
   // A regular hop's segment has one real port; a patch-panel pass-through
-  // segment has two (the rear side it comes in on and the front side it
-  // goes out on, same numbered pair) -- an AP Group / Virtual Switch hop
-  // has none (port_id is null). Passing all of a segment's real port ids
-  // through highlights that whole pass-through pair on arrival, not just
-  // whichever side happened to be listed first; see highlightPorts().
+  // segment has two (rear and front); a virtual-switch hop has none
+  // (port_id is null). See highlightPorts().
   const portIds = seg.ports.map(p => p.port_id).filter(id => id !== null && id !== undefined);
   return `<div class="path-hop">
     <div class="path-hop-device"><a class="link" href="${deviceHref(seg.device_id, portIds)}" title="${esc(seg.device_name)}" onclick="deviceLinkClick(event, ${seg.device_id}, [${portIds.join(",")}])">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
@@ -888,18 +775,12 @@ async function openDeviceModal(deviceId) {
     api("/api/settings/roles"),
     api("/api/sites"),
   ]);
-  // Role dropdown options come from Settings -> Device roles
-  // (crud.get_enabled_roles) instead of always showing the full fixed
-  // list, same idea as the speed picker below. If the device's current
-  // role isn't in that enabled set (old data, a CSV import, or a role
-  // that's since been hidden), keep it selectable anyway so saving the
-  // modal doesn't silently blank it out.
+  // Role dropdown options come from Settings -> Device roles. If the
+  // device's current role isn't in that enabled set, keep it selectable
+  // so saving the modal doesn't blank it out.
   const roleNames = roleSettings.enabled.slice();
   if (d.role && !roleNames.includes(d.role)) roleNames.push(d.role);
-  // Same idea for site: it's a plain user-managed list (Settings -> Sites),
-  // so a value that isn't (or no longer is) in that list -- from before the
-  // list existed, a CSV import, or a site since renamed/removed -- still
-  // shows up here as an extra option instead of getting silently blanked.
+  // Same idea for site.
   const siteNames = sites.map(s => s.name);
   if (d.site && !siteNames.includes(d.site)) siteNames.push(d.site);
   renderModal(`
@@ -958,9 +839,8 @@ async function confirmDeleteDevice(id, name) {
   try {
     await api(`/api/devices/${id}`, { method: "DELETE" });
     showToast("Device deleted");
-    // The Device tab (and browser back/forward) can no longer point at
-    // this device -- drop it so the tab hides again and nothing tries to
-    // re-render a device that's gone.
+    // Drop the Device tab so it hides again instead of pointing at a
+    // device that's gone.
     if (lastViewedDeviceId === id) lastViewedDeviceId = null;
     await navigateTo({ tab: "browse" });
   } catch (e) { showToast(e.message, true); }
@@ -1047,13 +927,9 @@ async function submitPatchPanel(deviceId) {
   }
 }
 
-// The port speed picker's options come from Settings -> Interface speeds
-// (crud.get_enabled_speeds) instead of a fixed list, so a network that'll
-// never see anything above 1G doesn't have to scroll past 2.5G/5G/10G/25G/
-// 40G/100G every single time. Always includes "" (not set) first, and
-// whatever the port's OWN current value already is even if it's since been
-// hidden from the picker -- same "don't silently blank existing data"
-// pattern used for role/site above.
+// The port speed picker's options come from Settings -> Interface speeds.
+// Always includes "" (not set) first, and the port's own current value
+// even if it's since been hidden from the picker.
 async function getSpeedOptions(currentValue) {
   const settings = await api("/api/settings/speeds");
   const opts = settings.enabled.slice();
@@ -1106,18 +982,12 @@ async function submitEditPort(portId) {
 }
 
 // ---------------------------------------------------------------------------
-// Reports -- read-only data-quality checks (see crud.data_quality_report on
-// the backend). Nothing here is editable; every list item links back to
-// the actual device via viewDevice() so fixing something found here is
-// just a click away.
+// Reports -- read-only data-quality checks (see crud.data_quality_report
+// on the backend).
 // ---------------------------------------------------------------------------
 
-// Each report is a plain <details> -- collapsed by default (no "open"
-// attribute) every time renderReportsView() runs, i.e. every time the
-// Reports tab is opened, and toggled purely by the browser's native
-// click-the-summary behavior. Title and count sit in the <summary> so
-// they're visible even while collapsed; the note + full body only render
-// (into the DOM at all) once expanded.
+// Each report is a plain <details>, collapsed by default. Title and
+// count sit in the <summary>; the note and body only render once expanded.
 function reportSection(key, title, note, count, bodyHtml) {
   return `
     <details class="card report-card" data-report="${esc(key)}">
@@ -1160,11 +1030,8 @@ function reportUnmanagedSites(groups) {
 }
 
 // One entry per report key (see crud.REPORT_DEFS on the backend, which
-// also supplies the title and display order -- this map only supplies the
-// note text and how to turn that key's slice of /api/reports into a count
-// + body). Keeping title/order server-side means the Settings page and
-// this view can never show different titles or a different order for the
-// same report.
+// supplies the title and display order). This map supplies the note text
+// and how to turn that key's slice of /api/reports into a count + body.
 function reportRenderers(r, devGrid) {
   return {
     missing_site: () => ({
@@ -1332,15 +1199,9 @@ function selectConnectDevice(which, id, name) {
   onConnectDeviceChange(which);
 }
 
-// Populates the From/To port select for whichever device was just picked.
-// A port already in use is still selectable (not disabled) -- its label
-// just says what it's currently connected to -- so picking one and
-// confirming the warning in submitConnect() moves that connection here in
-// one step instead of requiring a separate disconnect first. If a device
-// has literally no ports at all yet, there's nothing to pick except
-// "+ Add a new port...", so that's auto-selected and its inline create
-// field opens right away instead of leaving the select on an unusable/
-// blank-looking state.
+// Populates the From/To port select for whichever device was just
+// picked. A port already in use is still selectable; its label shows
+// what it's currently connected to.
 async function onConnectDeviceChange(which) {
   const deviceId = document.getElementById(`c_${which}Device`).value;
   const sel = document.getElementById(`c_${which}Port`);
@@ -1357,8 +1218,7 @@ async function onConnectDeviceChange(which) {
   sel.innerHTML = (d.ports.length ? options : `<option value="" disabled>No ports on this device</option>`)
     + `<option value="__new__">+ Add a new port...</option>`;
   if (!d.ports.length) {
-    // Nothing selectable except "+ Add a new port..." -- it'll land there
-    // as the default selection, so open the inline creator right away.
+    // Only "+ Add a new port..." is selectable; open its inline creator.
     sel.value = "__new__";
     onConnectPortSelectChange(which);
   }
@@ -1560,9 +1420,6 @@ async function deleteLag(lagId, deviceId) {
   } catch (e) { showToast(e.message, true); }
 }
 
-// Backup/Restore and Reset data all moved to the Settings page in v1.8.0 --
-// see settings.html / settings.js.
-
 // ---------------------------------------------------------------------------
 // Footer
 // ---------------------------------------------------------------------------
@@ -1572,8 +1429,7 @@ api("/api/meta").then(meta => {
 });
 
 // ---------------------------------------------------------------------------
-// Startup: figure out who's signed in (if anyone) before rendering anything.
-// Not signed in -> show the login screen instead of the app.
+// Startup: show the login screen if no one's signed in, else render the app.
 // ---------------------------------------------------------------------------
 api("/api/whoami").then(who => {
   if (!who.role) {
@@ -1589,12 +1445,8 @@ api("/api/whoami").then(who => {
   if (who.admin_default_password) showDefaultPasswordReminder();
 });
 
-// Shown on every admin login for as long as the admin account still has
-// its out-of-the-box default password (see api_whoami's
-// admin_default_password field) -- disappears for good, permanently, the
-// moment that password is actually changed from Settings; there's no
-// "don't remind me" dismissal to build or store, since the condition
-// itself is what stops it from showing again.
+// Shown on every admin login while the admin account still has its
+// default password. Stops once that password is changed from Settings.
 function showDefaultPasswordReminder() {
   renderModal(`
     <h3>Change the default admin password</h3>

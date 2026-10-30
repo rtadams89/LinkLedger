@@ -1,42 +1,17 @@
-"""CSV export/import for the three data tables (devices, ports, cables) plus
-the Sites list and the enabled-roles/enabled-speeds/enabled-reports picker
-settings, and the "Backup"/"Restore" zip bundle built on top of all six (see
-build_backup_zip / restore_backup_zip at the bottom of this file) -- that
-zip is what the Settings page's Backup/Restore buttons actually use.
+"""CSV export/import for devices, ports, cables, sites, and the
+enabled-roles/enabled-speeds/enabled-reports picker settings, plus the
+Backup/Restore zip bundle built on top of all seven (see
+build_backup_zip / restore_backup_zip at the bottom of this file).
 
-The CSVs reference devices/ports by NAME rather than raw database id, on
-purpose -- it makes them hand-editable in a spreadsheet, and it means
-export -> edit -> import round-trips cleanly even though ids get
-reassigned on import.
+The CSVs reference devices/ports by name rather than database id.
 
-A couple of things worth knowing about the replace semantics:
-- Replacing devices also replaces ports, cables, and LAGs -- none of those
-  can exist without the device they're on, so the database enforces this
-  via cascading deletes regardless of what this module does.
-- Replacing ports also replaces cables and clears LAG membership, for the
-  same reason (a cable/LAG can't point at a port that no longer exists).
-  The ports CSV's own `lag` column repopulates LAG membership as part of
-  the same import; re-import a cables CSV afterward if you need to
-  restore those connections too.
-- Replacing cables only replaces cables; devices and ports are untouched.
-- Replacing sites replaces the whole managed Sites list (not a merge) --
-  same "replace, don't merge" rule as everything else here. It does NOT
-  touch devices.site on any existing device (that's still just free text,
-  same as always -- see crud.py's Sites section), so this can never blank
-  a device's site even if the restored list doesn't happen to include it.
-- Replacing roles/speeds/reports replaces the whole enabled set for that
-  picker (there's only ever one such set, so "replace" and "merge" mean the
-  same thing here) -- same non-destructive contract as the Settings page
-  checkboxes: this only changes what's offered/shown, never what's already
-  saved on a device/port, and never the underlying Reports-tab data itself.
-- A Restore applies whichever of devices/ports/cables/sites/roles/speeds/
-  reports it finds inside the zip. devices/ports/cables always apply in
-  that dependency order regardless of the order the files appear in the
-  zip -- otherwise, e.g., importing ports.csv after devices.csv would be
-  fine, but importing them in the reverse order would have the devices
-  import's cascade wipe out the ports that were just restored. sites/
-  roles/speeds/reports have no such dependency (on the other data or on
-  each other), so their relative order doesn't matter.
+Replace semantics: replacing devices also replaces ports, cables, and
+LAGs. Replacing ports also replaces cables and clears LAG membership.
+Replacing cables only replaces cables. Replacing sites, roles, speeds,
+or reports replaces that whole list without touching any device/port's
+own stored value. A Restore applies devices/ports/cables (in that order)
+and then sites/roles/speeds/reports, for whichever of those it finds in
+the zip.
 """
 
 import csv
@@ -48,25 +23,15 @@ from datetime import datetime, timezone
 from . import crud, db
 
 DEVICE_COLUMNS = ["name", "role", "model", "site", "notes", "poe_required"]
-# wireless_link/uplink_for are new in v1.6.0 (AP Group / Virtual Switch
-# support); lag is new in v1.7.0 (LAG / bonded-link support). All three are
-# appended at the end and NOT required for detection (see _SCHEMAS below),
-# so a ports CSV exported before this version still re-imports cleanly
-# with the new columns simply blank for every row.
 PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with",
                 "wireless_link", "uplink_for", "lag"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
 SITE_COLUMNS = ["name"]
-ROLE_COLUMNS = ["role"]      # one row per currently-ENABLED role (see crud.get_enabled_roles)
-SPEED_COLUMNS = ["speed"]    # one row per currently-ENABLED speed (see crud.get_enabled_speeds)
-REPORT_COLUMNS = ["report"]  # one row per currently-ENABLED report (see crud.get_enabled_reports)
+ROLE_COLUMNS = ["role"]      # one row per currently-enabled role
+SPEED_COLUMNS = ["speed"]    # one row per currently-enabled speed
+REPORT_COLUMNS = ["report"]  # one row per currently-enabled report
 
-# Used to auto-detect which type an uploaded CSV is, from its header row --
-# deliberately just the columns a ports CSV has ALWAYS had, so older
-# exports (without wireless_link/uplink_for) still detect correctly. The
-# single-column schemas (sites/roles/speeds/reports) can't collide with
-# devices/ports/cables -- none of those has a bare "name"/"role"/"speed"/
-# "report" as its ENTIRE required column set.
+# Used to auto-detect which type an uploaded CSV is, from its header row.
 _SCHEMAS = {
     "devices": set(DEVICE_COLUMNS),
     "ports": {"device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with"},
@@ -211,7 +176,7 @@ def _export_reports(conn) -> bytes:
 def _detect_kind(header_fields):
     header_set = {f.strip() for f in (header_fields or []) if f and f.strip()}
     for kind, schema in _SCHEMAS.items():
-        if schema <= header_set:  # every required column is present (extra columns are tolerated)
+        if schema <= header_set:  # every required column present; extra columns tolerated
             return kind
     return None
 
@@ -223,9 +188,9 @@ def _raise_validation(errors):
 
 
 def import_csv(conn, data: bytes) -> dict:
-    """Validates the CSV BEFORE touching the database -- either the whole
-    import applies or nothing does. Detects devices/ports/cables/sites/
-    roles/speeds from the header row and replaces only that one."""
+    """Validates the CSV before touching the database. Detects
+    devices/ports/cables/sites/roles/speeds/reports from the header row
+    and replaces only that one."""
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -275,9 +240,7 @@ def _import_devices(conn, rows):
     if errors:
         _raise_validation(errors)
 
-    # Devices can't exist without... themselves, but ports/cables can't
-    # exist without the devices they're on -- cascading deletes handle
-    # that automatically once the devices are gone.
+    # Cascading deletes clear ports/cables once their devices are gone.
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
@@ -333,14 +296,8 @@ def _import_ports(conn, rows):
     if errors:
         _raise_validation(errors)
 
-    # Cables can't point at ports that no longer exist, so replacing ports
-    # necessarily clears cables too -- re-import a cables CSV afterward to
-    # restore connections if needed. Any virtual_switch_uplinks rows for
-    # replaced ports cascade-delete automatically along with the ports.
-    # LAGs don't cascade-delete this way (a lag belongs to the device, not
-    # to any one port), but every existing lag's members are about to
-    # vanish anyway, so clear them out too -- re-populate via this same
-    # ports CSV's `lag` column, which the pass below does automatically.
+    # Replacing ports clears cables (they'd point at gone ports) and LAGs
+    # (repopulated below from this same CSV's `lag` column).
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM lags")
@@ -381,9 +338,7 @@ def _import_ports(conn, rows):
         conn.execute("INSERT INTO virtual_switch_uplinks (virtual_switch_id, port_id) VALUES (?, ?)",
                       (device_ids[uplink_for], port_ids[(dname, pname)]))
 
-    # LAG membership -- a lag name is scoped to its device, so two devices
-    # can each have their own "LAG1" without clashing. Created on the fly
-    # (no need to pre-declare it anywhere in the file).
+    # LAG membership -- a lag name is scoped to its device.
     lag_ids = {}  # (device_name, lag_name) -> lag_id
     for row in rows:
         lag_name = (row.get("lag") or "").strip()
@@ -431,10 +386,8 @@ def _import_cables(conn, rows):
 
 
 def _import_sites(conn, rows):
-    """Replaces the whole managed Sites list. Does NOT touch devices.site on
-    any existing device -- that stays free text either way (see crud.py's
-    Sites section), so this can never blank a device even if the restored
-    list doesn't happen to include whatever it's currently set to."""
+    """Replaces the whole managed Sites list. Does not touch any device's
+    own site value."""
     errors = []
     names = set()
     for i, row in enumerate(rows, start=2):
@@ -454,9 +407,8 @@ def _import_sites(conn, rows):
 
 
 def _import_roles(conn, rows):
-    """Replaces the enabled-roles picker setting outright -- there's only
-    ever one such set, so "replace" and "merge" mean the same thing here.
-    Doesn't touch any device's own role value (see crud.get_enabled_roles)."""
+    """Replaces the enabled-roles picker setting. Doesn't touch any
+    device's own role value."""
     errors = []
     roles = []
     for i, row in enumerate(rows, start=2):
@@ -474,8 +426,8 @@ def _import_roles(conn, rows):
 
 
 def _import_speeds(conn, rows):
-    """Replaces the enabled-speeds picker setting outright, same story as
-    _import_roles above. Doesn't touch any port's own speed value."""
+    """Replaces the enabled-speeds picker setting. Doesn't touch any
+    port's own speed value."""
     errors = []
     speeds = []
     for i, row in enumerate(rows, start=2):
@@ -493,9 +445,8 @@ def _import_speeds(conn, rows):
 
 
 def _import_reports(conn, rows):
-    """Replaces the Reports-tab visibility setting outright, same story as
-    _import_roles/_import_speeds above. Doesn't touch the underlying report
-    data -- data_quality_report always computes every check regardless."""
+    """Replaces the Reports-tab visibility setting. Doesn't touch the
+    underlying report data."""
     errors = []
     reports = []
     for i, row in enumerate(rows, start=2):
@@ -513,9 +464,8 @@ def _import_reports(conn, rows):
 
 
 # ---------------------------------------------------------------------------
-# Backup / Restore -- a single .zip bundling all six CSVs plus a small
-# metadata file, instead of asking someone to export/import each type as a
-# separate round trip.
+# Backup / Restore -- a single .zip bundling all seven CSVs plus a small
+# metadata file.
 # ---------------------------------------------------------------------------
 
 BACKUP_INFO_FILENAME = "backup-info.json"
@@ -523,12 +473,8 @@ BACKUP_INFO_FILENAME = "backup-info.json"
 
 def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
     """Builds the Backup .zip: devices.csv, ports.csv, cables.csv, sites.csv,
-    roles.csv, speeds.csv, reports.csv, and a backup-info.json noting when
-    the backup was made and which LinkLedger version made it. roles.csv/
-    speeds.csv/reports.csv capture the enabled-picker settings (Settings ->
-    Device roles / Interface speeds / Reports shown), not the fixed
-    underlying lists. Returns (zip_bytes, created_at) -- the caller uses
-    created_at to name the downloaded file."""
+    roles.csv, speeds.csv, reports.csv, and a backup-info.json with the
+    creation time and LinkLedger version. Returns (zip_bytes, created_at)."""
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     info = {"linkledger_version": version, "created_at": created_at}
 
@@ -546,22 +492,12 @@ def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
 
 
 def restore_backup_zip(conn, data: bytes) -> dict:
-    """Restores a Backup .zip (see build_backup_zip) -- or really any zip
-    containing one or more of devices.csv/ports.csv/cables.csv/sites.csv/
-    roles.csv/speeds.csv/reports.csv (by column header, not filename, same
-    detection as a single-CSV import), so a backup trimmed down to just the
-    file(s) you changed still works. Applies whichever types it finds --
-    devices/ports/cables always in that dependency order regardless of what
-    order they appear in the zip (see the module docstring for why); sites/
-    roles/speeds/reports have no dependency on those or each other, so
-    they're applied afterward in a fixed but otherwise arbitrary order.
-    Non-CSV members (backup-info.json, thumbnails from an unzip-then-rezip,
-    whatever) and CSVs that don't match a known column schema are silently
-    ignored. Raises ConflictError if nothing usable is found, or if any of
-    the CSVs found fails validation -- the whole restore shares one
-    connection/transaction, so if e.g. the cables CSV fails after devices
-    and ports already applied, none of it is committed, not even the parts
-    that individually would have been fine."""
+    """Restores a Backup .zip (see build_backup_zip), or any zip containing
+    one or more of devices.csv/ports.csv/cables.csv/sites.csv/roles.csv/
+    speeds.csv/reports.csv (detected by column header, not filename).
+    Applies devices/ports/cables in that order, then sites/roles/speeds/
+    reports. Non-CSV members and unrecognized CSVs are ignored. Raises
+    ConflictError if nothing usable is found or any CSV fails validation."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:

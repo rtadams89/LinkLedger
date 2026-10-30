@@ -1,8 +1,6 @@
 // ---------------------------------------------------------------------------
-// Settings page: Backup/Restore, account passwords, and Reset data. This is
-// a standalone page (not part of the main SPA in app.js -- it has no login
-// screen, device grid, etc. of its own), so it carries its own small copies
-// of the handful of helpers it needs instead of loading all of app.js.
+// Settings page: Backup/Restore, account passwords, and Reset data. A
+// standalone page with its own small copies of the helpers it needs.
 // ---------------------------------------------------------------------------
 
 async function api(path, options) {
@@ -36,8 +34,7 @@ let CURRENT_ROLE = null;
 function isAdmin() { return CURRENT_ROLE === "admin"; }
 
 function applyRoleVisibility() {
-  // .admin-only defaults to display:none in the stylesheet (fail closed) --
-  // same convention as the main app.
+  // .admin-only defaults to display:none in the stylesheet.
   document.querySelectorAll(".admin-only").forEach(el => {
     if (isAdmin()) el.classList.remove("admin-only");
     else el.style.display = "none";
@@ -275,7 +272,7 @@ async function submitChangeAdminPassword() {
   }
 }
 
-// --- Set the viewer account's password (admin override, no current password needed) ---
+// --- Set the viewer account's password (admin override) ---
 async function submitSetViewerPassword() {
   const next = document.getElementById("vpw_new").value;
   const confirmVal = document.getElementById("vpw_confirm").value;
@@ -332,7 +329,7 @@ async function confirmResetData() {
   } catch (e) { showToast(e.message, true); }
 }
 
-// --- Bootstrap: figure out who's signed in before showing anything ---
+// --- Bootstrap: show nothing until we know who's signed in ---
 api("/api/whoami").then(who => {
   if (!who.role) {
     document.getElementById("notSignedIn").style.display = "block";

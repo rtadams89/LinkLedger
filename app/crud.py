@@ -1,5 +1,4 @@
-"""Business logic: validation + the connection-trace algorithm, kept separate
-from the HTTP layer so it can be unit-tested directly."""
+"""Business logic: validation and the connection-trace algorithm."""
 
 import hashlib
 import hmac
@@ -9,21 +8,14 @@ import sqlite3
 
 from . import db
 
-# Recognized port speeds, in Mbps, used to work out the effective (slowest
-# common denominator) speed of a connection from the speeds set on each end.
+# Recognized port speeds, in Mbps.
 SPEED_MBPS = {
     "10M": 10, "100M": 100, "1G": 1000, "2.5G": 2500,
     "5G": 5000, "10G": 10000, "25G": 25000, "40G": 40000, "100G": 100000,
 }
 
-# The fixed set of Reports-tab checks and their display titles/order, in one
-# place so the Settings page's "which reports are shown" checkboxes and the
-# Reports tab itself never drift out of sync with each other. Keyed the same
-# as data_quality_report's return dict below. Whether a given check is
-# *enabled* (see get_enabled_reports/set_enabled_reports) only controls
-# whether the frontend renders that card -- data_quality_report always
-# computes and returns all of them regardless, same as the speed/role
-# picker settings only ever hide what's *offered*, never what's stored.
+# Reports-tab checks and their display titles/order, keyed the same as
+# data_quality_report's return dict below.
 REPORT_DEFS = [
     ("missing_site", "Devices missing a site"),
     ("missing_model", "Devices missing a model"),
@@ -110,20 +102,13 @@ def update_device(conn, device_id: int, **fields):
 
 def delete_device(conn, device_id: int):
     get_device(conn, device_id)
-    # If this was an AP Group / Virtual Switch, any ports that were joined
-    # to it (wireless clients, VM/container vNICs) lose that link rather
-    # than being left pointing at a deleted device. Harmless no-op update
-    # for any other device role.
+    # Unlink any ports joined to this device as a virtual switch.
     conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE virtual_switch_id = ?", (device_id,))
     conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
 
 
 # ---------------------------------------------------------------------------
-# Sites -- a small user-managed picklist for devices.site. See db.py's
-# `sites` table comment for why this isn't a fixed built-in list the way
-# role is. A device's site is still just a free-text column underneath
-# (create_device/update_device don't check it against this table), so
-# nothing here can silently blank existing data -- see delete_site below.
+# Sites -- a user-managed picklist for devices.site.
 # ---------------------------------------------------------------------------
 
 def list_sites(conn):
@@ -155,8 +140,7 @@ def rename_site(conn, site_id: int, new_name: str):
             conn.execute("UPDATE sites SET name = ? WHERE id = ?", (new_name, site_id))
         except sqlite3.IntegrityError:
             raise ConflictError(f"a site named '{new_name}' already exists")
-        # Cascade the rename to every device currently set to the old value
-        # -- a rename means "same place, new label," unlike delete below.
+        # Cascade the rename to every device currently set to the old value.
         conn.execute("UPDATE devices SET site = ? WHERE site = ?", (new_name, old_name))
     return {"id": site_id, "name": new_name}
 
@@ -166,12 +150,7 @@ def delete_site(conn, site_id: int):
     if not row:
         raise NotFoundError(f"site {site_id} not found")
     conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
-    # Deliberately NOT touching devices.site for anything already set to
-    # this value -- same rule as removing a role from the fixed list not
-    # blanking devices that already use it. It just stops being offered for
-    # new picks; the Reports page (data_quality_report) flags any device
-    # whose site value isn't in this list, so a value orphaned by a delete
-    # like this one is easy to find and clean up later if you want to.
+    # devices.site values already set to this value are left untouched.
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +192,9 @@ def create_ports_bulk(conn, device_id: int, names: list[str], speed: str = "", p
 
 
 def create_patch_panel_ports(conn, device_id: int, count: int, start: int = 1):
-    """Convenience: create N front/rear port pairs for a patch panel,
-    pre-paired so traces automatically pass through them. `start` lets this
-    be used again later to add more pairs to a panel that already has some
-    (e.g. numbers 1-11 exist, add one more pair at 20) without colliding
-    with the existing ones -- the loop always used to start at 1, so a
-    second call on a non-empty panel would immediately fail on '1 (rear)'
-    already existing and create nothing at all."""
+    """Creates `count` front/rear port pairs for a patch panel, pre-paired
+    so traces pass through them. `start` sets the first pair number, so
+    more pairs can be added later without colliding with existing ones."""
     get_device(conn, device_id)
     created = []
     for i in range(start, start + count):
@@ -238,8 +213,7 @@ def delete_port(conn, port_id: int):
 
 def update_port(conn, port_id: int, name: str | None = None, speed: str | None = None,
                  vlans: str | None = None, poe_supply: bool | None = None):
-    """Partial update -- only fields that are not None are changed. Covers
-    what used to be rename_port() plus the new speed/VLAN/PoE fields."""
+    """Partial update -- only fields that are not None are changed."""
     get_port(conn, port_id)
     updates = {}
     if name is not None:
@@ -267,8 +241,7 @@ def update_port(conn, port_id: int, name: str | None = None, speed: str | None =
 
 
 def set_pair(conn, port_id: int, pair_port_id: int | None):
-    """Manually pair (or unpair) two ports on the same device as a
-    pass-through, e.g. for patch panels not created via the bulk helper."""
+    """Pairs (or unpairs) two ports on the same device as a pass-through."""
     port = get_port(conn, port_id)
     # clear any existing pairing on this port first
     if port["pair_port_id"]:
@@ -291,22 +264,13 @@ def set_pair(conn, port_id: int, pair_port_id: int | None):
 
 
 # ---------------------------------------------------------------------------
-# Interface speed picker settings -- which of the recognized speeds
-# (SPEED_MBPS above) show up in the port speed dropdown. Purely a UI
-# convenience for hiding speeds a given network will never use (e.g.
-# 40G/100G on a home network) so they don't clutter the picker every time --
-# it does NOT change what's a legal value. Any of SPEED_MBPS's keys is
-# always accepted by create_port/update_port/CSV import regardless of this
-# setting, so hiding a speed here can never blank or break a port that
-# already has it set -- that value just stops being offered for NEW picks.
-# Stored in the `meta` key/value table (key='enabled_speeds', a JSON array)
-# rather than its own table, since it's a single setting, not a list of
-# distinct records the user creates/renames/deletes the way sites are.
+# Interface speed picker settings -- which of SPEED_MBPS show up in the
+# port speed dropdown. Stored in the `meta` key/value table as a JSON
+# array under key='enabled_speeds'.
 # ---------------------------------------------------------------------------
 
 def get_enabled_speeds(conn):
-    """Defaults to every recognized speed (i.e. today's fixed dropdown,
-    unchanged) until someone visits Settings and narrows it down."""
+    """Defaults to every recognized speed until narrowed via Settings."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'enabled_speeds'").fetchone()
     if not row or not row["value"]:
         return list(SPEED_MBPS)
@@ -314,9 +278,7 @@ def get_enabled_speeds(conn):
         saved = set(json.loads(row["value"]))
     except (ValueError, TypeError):
         return list(SPEED_MBPS)
-    # Re-filter against SPEED_MBPS (in its canonical slowest->fastest order)
-    # rather than trusting the stored list verbatim, in case a future
-    # version ever changes what's recognized.
+    # Re-filter against SPEED_MBPS to drop anything no longer recognized.
     return [s for s in SPEED_MBPS if s in saved]
 
 
@@ -335,22 +297,11 @@ def set_enabled_speeds(conn, speeds: list[str]):
 
 # ---------------------------------------------------------------------------
 # Device role picker settings -- which of the fixed roles (db.ROLES) show
-# up in the Add/Edit device Role dropdown. Same story as the speed picker
-# settings just above: role itself STAYS a fixed, non-user-editable list
-# (see db.ROLES's comment for why -- v1.5.0 walked back a fully custom
-# role list, and several roles drive real behavior like bridging/VLAN/PoE
-# options and path finding, unlike a site name or a speed rating). This
-# only controls which of that fixed list are OFFERED, for someone who
-# knows they'll never add a Patch Panel or a Hypervisor and would rather
-# not scroll past them every time. Hiding a role here can never blank or
-# break a device that already has it set -- create_device/update_device
-# don't check against this, so it's exactly as non-destructive as hiding a
-# speed.
+# up in the Add/Edit device Role dropdown.
 # ---------------------------------------------------------------------------
 
 def get_enabled_roles(conn):
-    """Defaults to every fixed role (i.e. today's full dropdown, unchanged)
-    until someone visits Settings and hides some."""
+    """Defaults to every fixed role until narrowed via Settings."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'enabled_roles'").fetchone()
     if not row or not row["value"]:
         return list(db.ROLES)
@@ -375,17 +326,12 @@ def set_enabled_roles(conn, roles: list[str]):
 
 
 # ---------------------------------------------------------------------------
-# Reports-tab visibility -- which of the checks in data_quality_report (see
-# REPORT_DEFS above) actually get shown on the Reports tab. Same pattern and
-# same non-destructive contract as enabled_roles/enabled_speeds above: a
-# single JSON array under its own `meta` key, admin-editable from Settings,
-# defaults to everything shown, and never affects what data_quality_report
-# itself computes -- only whether the frontend renders that card.
+# Reports-tab visibility -- which of the checks in REPORT_DEFS are shown on
+# the Reports tab.
 # ---------------------------------------------------------------------------
 
 def get_enabled_reports(conn):
-    """Defaults to every report (today's full Reports tab, unchanged) until
-    someone visits Settings and hides some."""
+    """Defaults to every report until narrowed via Settings."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'enabled_reports'").fetchone()
     if not row or not row["value"]:
         return list(REPORT_KEYS)
@@ -410,16 +356,10 @@ def set_enabled_reports(conn, reports: list[str]):
 
 
 # ---------------------------------------------------------------------------
-# Virtual switches (AP Group / Virtual Switch): uplinks + member links
-#
-# A virtual switch has no physical ports of its own. It bridges together:
-#   - uplinks: real ports elsewhere in the topology that keep their own
-#     normal cable too (an access point's wired port, a hypervisor's
-#     physical NIC) -- this just additionally marks that port as this
-#     virtual switch's way out to the rest of the network.
-#   - members: ports whose ONLY connection is to this virtual switch
-#     instead of a cable (a wireless client's NIC, a VM/container's vNIC)
-#     -- tracked directly on the port via virtual_switch_id.
+# Virtual switches (AP Group / Virtual Switch): uplinks + member links.
+# A virtual switch has no physical ports of its own. Uplinks are real
+# ports elsewhere that keep their own cable too; members are ports whose
+# only connection is this virtual switch, tracked via virtual_switch_id.
 # ---------------------------------------------------------------------------
 
 def _require_virtual_switch(conn, virtual_switch_id: int):
@@ -430,14 +370,8 @@ def _require_virtual_switch(conn, virtual_switch_id: int):
 
 
 def _unset_virtual_link(conn, port):
-    """Clears virtual_switch_id on a port that's being unlinked (explicitly,
-    or as a side effect of create_cable's overwrite=True). A member port's
-    VLAN(s) field is only ever shown/editable in the UI because it's a
-    member (see VLAN_POE_CAPABLE_ROLES's role check, which the edit-port
-    modal ORs with virtual_switch_id) -- once unlinked, that value becomes
-    permanently invisible dead data for anything other than a Switch/
-    Router-role device, so it's cleared at the same time rather than left
-    behind as an orphan only a raw DB/CSV edit could ever remove."""
+    """Clears virtual_switch_id on a port being unlinked. Also clears vlans
+    unless the device role is VLAN/PoE-capable."""
     device = get_device(conn, port["device_id"])
     if device["role"] in db.VLAN_POE_CAPABLE_ROLES:
         conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE id = ?", (port["id"],))
@@ -447,9 +381,8 @@ def _unset_virtual_link(conn, port):
 
 def set_virtual_link(conn, port_id: int, virtual_switch_id: int | None):
     """Marks a port as joining an AP Group / Virtual Switch instead of
-    being cabled -- e.g. a wireless client's NIC, or a VM/container's vNIC.
-    Mutually exclusive with having a cable or being paired; pass None to
-    unlink."""
+    being cabled. Mutually exclusive with having a cable or being paired;
+    pass None to unlink."""
     port = get_port(conn, port_id)
     if virtual_switch_id is None:
         _unset_virtual_link(conn, port)
@@ -498,10 +431,8 @@ def remove_uplink(conn, uplink_id: int):
 
 
 def list_members(conn, virtual_switch_id: int):
-    """Ports elsewhere that join this virtual switch as their only
-    connection (a wireless client's NIC, a VM/container's vNIC) -- the
-    read-only flip side of list_uplinks. New members are added from the
-    member port's own "connect" flow (set_virtual_link), not from here."""
+    """Ports that join this virtual switch as their only connection -- the
+    read-only flip side of list_uplinks."""
     _require_virtual_switch(conn, virtual_switch_id)
     rows = conn.execute(
         "SELECT p.id AS port_id, p.name AS port_name, p.vlans AS vlans, "
@@ -514,11 +445,9 @@ def list_members(conn, virtual_switch_id: int):
 
 
 # ---------------------------------------------------------------------------
-# LAGs (link aggregation groups) -- bond two or more of a device's OWN
-# physical ports into one logical link (e.g. a NAS's two bonded NICs, or a
-# switch-to-switch trunk over two cables). Each member port keeps its own
-# individual cable; this is purely a grouping/label on top of that, so
-# path finding still traces each member port independently.
+# LAGs (link aggregation groups) -- bond two or more of a device's own
+# physical ports into one logical link. Each member port keeps its own
+# individual cable.
 # ---------------------------------------------------------------------------
 
 def list_lags(conn, device_id: int):
@@ -550,8 +479,7 @@ def delete_lag(conn, lag_id: int):
     row = conn.execute("SELECT id FROM lags WHERE id = ?", (lag_id,)).fetchone()
     if not row:
         raise NotFoundError(f"LAG {lag_id} not found")
-    # Members just stop being marked as bonded -- their ports and cables
-    # are untouched.
+    # Members just stop being marked as bonded.
     conn.execute("UPDATE ports SET lag_id = NULL WHERE lag_id = ?", (lag_id,))
     conn.execute("DELETE FROM lags WHERE id = ?", (lag_id,))
 
@@ -602,15 +530,10 @@ def list_cables(conn):
 
 
 def create_cable(conn, port_a_id: int, port_b_id: int, label: str = "", overwrite: bool = False):
-    """Cables two ports together. By default both ports must be free (no
-    existing cable, no wireless/virtual link) -- same as always. Pass
-    overwrite=True (the frontend does this only after the user confirms a
-    warning) to instead silently disconnect whatever's currently on either
-    port first -- a cable, or a wireless/virtual link -- so moving a cable
-    to a port that's already in use is one call instead of
-    disconnect-then-reconnect. Patch-panel pairing and LAG membership are
-    untouched either way -- overwriting a cable doesn't change what a port
-    IS, just what it's currently plugged into."""
+    """Cables two ports together. Both ports must be free (no existing
+    cable, no wireless/virtual link) unless overwrite=True, which instead
+    disconnects whatever's currently on either port first. Patch-panel
+    pairing and LAG membership are untouched either way."""
     if port_a_id == port_b_id:
         raise ConflictError("a port can't be cabled to itself")
     pa = get_port(conn, port_a_id)
@@ -657,9 +580,7 @@ def delete_cable(conn, cable_id: int):
 # ---------------------------------------------------------------------------
 
 def _port_hop(conn, port_id: int, cable=None):
-    """Builds one trace hop dict for arriving at a real port (via cable, or
-    via a pass-through pair -- callers pass the cable row when there is
-    one)."""
+    """Builds one trace hop dict for arriving at a real port."""
     row = conn.execute(
         "SELECT ports.*, devices.name AS device_name, devices.role AS device_role FROM ports "
         "JOIN devices ON devices.id = ports.device_id WHERE ports.id = ?",
@@ -681,18 +602,11 @@ def _port_hop(conn, port_id: int, cable=None):
 
 
 def trace(conn, start_port_id: int, max_hops: int = 16):
-    """Returns a list of hops, each a dict with device/port info and whether
-    it was reached via a same-device pass-through. The last hop is the far
-    end; an empty list means the starting port isn't connected to anything.
-
-    A port whose ONLY connection is to an AP Group / Virtual Switch (see
-    set_virtual_link above) produces a "virtual" hop for that device instead
-    of a cable hop. If that virtual switch has exactly one uplink, the trace
-    continues through it as normal (e.g. wireless client -> AP Group ->
-    the one AP's wired port -> ... -> a switch). With zero or more than one
-    uplink there's no single deterministic path, so the trace stops at the
-    virtual hop -- callers can use hop["uplink_count"] to say e.g. "reachable
-    via 3 APs" rather than showing a path that isn't really "the" path."""
+    """Returns a list of hops from start_port_id to the far end of the
+    connection; an empty list means the starting port isn't connected to
+    anything. A port linked only to a virtual switch produces a "virtual"
+    hop; if that switch has exactly one uplink the trace continues through
+    it, otherwise it stops there."""
     get_port(conn, start_port_id)
     hops = []
     seen = {start_port_id}
@@ -720,9 +634,8 @@ def trace(conn, start_port_id: int, max_hops: int = 16):
                 break
             nxt = uplinks[0]["port_id"]
             seen.add(nxt)
-            # The uplink port itself is a real stop in the chain (e.g. the
-            # AP's own wired port) -- show it before continuing to trace
-            # whatever it's cabled to.
+            # The uplink port is a real stop in the chain; show it before
+            # continuing to trace whatever it's cabled to.
             hops.append(_port_hop(conn, nxt))
             cur = nxt
             continue
@@ -732,7 +645,7 @@ def trace(conn, start_port_id: int, max_hops: int = 16):
             break
         other_id = cable["port_b_id"] if cable["port_a_id"] == cur else cable["port_a_id"]
         if other_id in seen:
-            break  # cycle guard -- shouldn't happen, but don't hang if it does
+            break  # cycle guard
         seen.add(other_id)
         other = _port_hop(conn, other_id, cable)
         hops.append(other)
@@ -746,10 +659,8 @@ def trace(conn, start_port_id: int, max_hops: int = 16):
 
 
 def effective_speed(start_port, hops):
-    """The link's effective speed is the slowest speed set on any real
-    endpoint along the chain (patch panel ports are pass-through and only
-    count if someone's explicitly rated one). None if nothing is set
-    anywhere, so the UI can just show nothing instead of a false '10M'."""
+    """The slowest speed set on any real endpoint along the chain. None if
+    nothing is set anywhere."""
     speeds = [start_port.get("speed")] + [h.get("speed") for h in hops]
     speeds = [s for s in speeds if s]
     if not speeds:
@@ -758,9 +669,7 @@ def effective_speed(start_port, hops):
 
 
 def effective_vlans(hops):
-    """VLANs tagged on the switch/router port at the far end of the chain,
-    carried forward so the device plugged into that port shows what
-    VLAN(s) it's actually on without having to go look at the switch."""
+    """VLANs tagged on the switch/router port at the far end of the chain."""
     for h in hops:
         if h.get("device_role") in db.VLAN_POE_CAPABLE_ROLES and h.get("vlans"):
             return h["vlans"]
@@ -768,13 +677,8 @@ def effective_vlans(hops):
 
 
 def effective_poe_supplied(hops):
-    """True if the switch/router port at the far end of the chain is
-    tagged as supplying PoE -- used to flag a device that needs power but
-    isn't actually plugged into a PoE-capable port. Stops at the first
-    virtual (wireless/virtual-switch) hop, if any -- PoE can't cross a
-    wireless link or a hypervisor's internal bridge, so a switch port
-    further down the chain (e.g. the one powering an access point) doesn't
-    count as powering whatever's virtually linked through it."""
+    """True if the switch/router port at the far end of the chain supplies
+    PoE. Stops at the first virtual hop, if any."""
     for h in hops:
         if h.get("virtual"):
             return False
@@ -790,29 +694,16 @@ def effective_poe_supplied(hops):
 # ---------------------------------------------------------------------------
 
 def clear_all_connections(conn):
-    """Disconnects everything -- every cable, and every wireless/virtual
-    link (both AP Group / Virtual Switch uplinks and the member ports
-    joined to them) -- while leaving devices and ports themselves alone.
-    Patch-panel front/rear pairing and LAG groupings are also left alone:
-    those describe what a port structurally IS, not what it's currently
-    plugged into, so they still make sense once you start re-cabling.
-    Handy when physically re-cabling a large swath of your network and
-    you'd rather start the connections from a clean slate than delete them
-    one at a time."""
+    """Disconnects every cable and wireless/virtual link, leaving devices,
+    ports, patch-panel pairing, and LAG groupings alone."""
     conn.execute("DELETE FROM cables")
     conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE virtual_switch_id IS NOT NULL")
     conn.execute("DELETE FROM virtual_switch_uplinks")
 
 
 def reset_all_data(conn):
-    """Wipes every device, port, and cable -- a true blank slate -- and also
-    clears the Sites list and resets the Device roles / Interface speeds /
-    Reports-tab picker settings back to their full default (everything
-    enabled/shown). This is the "start documenting a completely different
-    environment from scratch" button, so it clears every bit of *your*
-    customization, not just the topology data -- the fixed Roles list itself
-    (db.ROLES) is the only thing that can't change, since it's not user data
-    to begin with."""
+    """Wipes every device, port, and cable, clears the Sites list, and
+    resets the role/speed/report picker settings back to their defaults."""
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
@@ -821,15 +712,8 @@ def reset_all_data(conn):
 
 
 # ---------------------------------------------------------------------------
-# Accounts / auth
-#
-# Two accounts, one per role ("admin", "viewer"). Passwords are hashed with
-# PBKDF2-HMAC-SHA256 (stdlib only, no extra dependency) -- never stored or
-# compared in plaintext. seed_accounts() creates the two rows the FIRST time
-# the app boots (see main.py for the fixed usernames and the admin
-# default/viewer random passwords it's called with); after that the
-# database is the source of truth and the Settings page is how you update
-# a password -- seed_accounts() is a no-op on every boot after the first.
+# Accounts / auth -- one admin account, one viewer account. Passwords are
+# hashed with PBKDF2-HMAC-SHA256.
 # ---------------------------------------------------------------------------
 
 _PBKDF2_ITERATIONS = 260_000
@@ -854,9 +738,7 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
 
 def seed_accounts(conn, admin_user: str, admin_pass: str, viewer_user: str, viewer_pass: str):
-    """Creates the admin/viewer account rows if they don't exist yet. A
-    no-op on every boot after the first, regardless of what the environment
-    variables currently say."""
+    """Creates the admin/viewer account rows if they don't exist yet."""
     existing = {row["role"] for row in conn.execute("SELECT role FROM accounts").fetchall()}
     if "admin" not in existing:
         conn.execute(
@@ -871,10 +753,8 @@ def seed_accounts(conn, admin_user: str, admin_pass: str, viewer_user: str, view
 
 
 def is_default_password(conn, role: str, default_password: str) -> bool:
-    """True if the account currently in the database for this role still has
-    the given built-in default password -- used to nag on every startup
-    until it's actually changed, rather than just checking the environment
-    variable (which stops mattering after the account is first created)."""
+    """True if the account for this role still has the given default
+    password."""
     row = conn.execute("SELECT password_hash FROM accounts WHERE role = ?", (role,)).fetchone()
     return bool(row) and _verify_password(default_password, row["password_hash"])
 
@@ -885,8 +765,7 @@ def get_account(conn, role: str):
 
 
 def verify_login(conn, username: str, password: str):
-    """Returns {"role": ..., "username": ...} on success, or None if the
-    username/password don't match any account."""
+    """Returns {"role": ..., "username": ...} on success, or None."""
     row = conn.execute("SELECT * FROM accounts WHERE username = ?", (username,)).fetchone()
     if not row or not _verify_password(password, row["password_hash"]):
         return None
@@ -894,10 +773,9 @@ def verify_login(conn, username: str, password: str):
 
 
 def change_password(conn, role: str, current_password: str, new_password: str):
-    """Changes the password for the account with this role, after checking
-    current_password against what's stored. Returns the updated
-    {"role": ..., "username": ...} on success, or None if current_password
-    was wrong (or the account doesn't exist, which shouldn't happen)."""
+    """Changes the password for the account with this role after verifying
+    current_password. Returns the updated account dict, or None if
+    current_password was wrong."""
     row = conn.execute("SELECT * FROM accounts WHERE role = ?", (role,)).fetchone()
     if not row or not _verify_password(current_password, row["password_hash"]):
         return None
@@ -909,11 +787,8 @@ def change_password(conn, role: str, current_password: str, new_password: str):
 
 
 def set_password(conn, role: str, new_password: str):
-    """Admin-override password set: no current_password check, since this
-    is the admin setting the *other* account's (viewer's) password on its
-    behalf, not changing their own. Raises NotFoundError if the account
-    doesn't exist (shouldn't happen -- both accounts are seeded on first
-    boot). Returns the updated {"role": ..., "username": ...}."""
+    """Sets the password for the account with this role without checking
+    current_password. Raises NotFoundError if the account doesn't exist."""
     row = conn.execute("SELECT * FROM accounts WHERE role = ?", (role,)).fetchone()
     if not row:
         raise NotFoundError(f"no {role} account")
@@ -925,34 +800,21 @@ def set_password(conn, role: str, new_password: str):
 
 
 # ---------------------------------------------------------------------------
-# Reports -- read-only data-quality checks for the Reports tab. Every check
-# here just points out where the topology documentation looks incomplete;
-# none of them change anything. Keep this list additive (new checks are
-# easy and safe to add) but don't get carried away flagging things that are
-# routinely and legitimately left blank -- e.g. patch panel ports never
-# getting a speed rating in practice, which is why that check specifically
-# excludes them below.
+# Reports -- read-only data-quality checks for the Reports tab.
 # ---------------------------------------------------------------------------
 
 def data_quality_report(conn):
     devices = list_devices(conn)
     site_names = {s["name"] for s in list_sites(conn)}
 
-    # Site and Model don't apply to the Internet device -- it's a
-    # documentation-only stand-in for "the public internet" (see its seeded
-    # notes), not a real piece of hardware sitting at a location, so it's
-    # excluded from both of these rather than permanently nagging about
-    # fields that were never meant to be filled in.
+    # Site and Model don't apply to the Internet device.
     missing_site = [d for d in devices if not d["site"] and d["role"] != "Internet"]
     missing_model = [d for d in devices if not d["model"] and d["role"] != "Internet"]
     missing_role = [d for d in devices if not d["role"]]
     no_ports = []
 
-    # Site values in use that aren't (or no longer are) in the managed
-    # Sites list -- grouped by value with a count, rather than one row per
-    # device, since the interesting fact is "this value exists and isn't
-    # recognized," not each individual device (could be many, e.g. right
-    # after upgrading to this version with pre-existing free-text sites).
+    # Site values in use that aren't in the managed Sites list, grouped by
+    # value with a count.
     unmanaged_by_value = {}
     for d in devices:
         site = d["site"]
@@ -966,10 +828,7 @@ def data_quality_report(conn):
     all_ports = []
     for d in devices:
         ports = list_ports(conn, d["id"])
-        # AP Group / Virtual Switch devices are ports-less by design -- they
-        # bridge uplinks and members instead (see VIRTUAL_SWITCH_ROLES), so
-        # having zero rows in the ports table is the expected, correct
-        # state for them, not something to flag here.
+        # AP Group / Virtual Switch devices are ports-less by design.
         if not ports and d["role"] not in db.VIRTUAL_SWITCH_ROLES:
             no_ports.append(d)
         for p in ports:
@@ -983,39 +842,27 @@ def data_quality_report(conn):
         cabled_port_ids.add(c["a_port_id"])
         cabled_port_ids.add(c["b_port_id"])
 
-    # Ports that plausibly SHOULD have a speed and don't -- excludes patch
-    # panel pass-through ports (never meaningfully "rated" in practice, and
-    # would otherwise dominate this list for anyone using patch panels),
-    # virtual-switch member ports (a wireless client's NIC etc. has no real
-    # speed of its own to set), and the Internet device's documentation-only
-    # WAN-uplink ports (not a real rated interface either).
+    # Ports that should have a speed and don't, excluding patch panel,
+    # virtual-switch member, and Internet device ports.
     missing_speed = [
         p for p in all_ports
         if not p["speed"] and not p["virtual_switch_id"]
         and p["device_role"] not in ("Patch Panel", "Internet")
     ]
 
-    # Genuinely just sitting there unused: no cable, not paired with
-    # another port on the same device, not a virtual-switch member.
+    # Unused: no cable, no pairing, no virtual-switch link.
     unused_ports = [
         p for p in all_ports
         if p["id"] not in cabled_port_ids and not p["pair_port_id"] and not p["virtual_switch_id"]
     ]
 
-    # AP Group / Virtual Switch devices with no uplinks defined -- these
-    # can never actually reach the rest of the network (see pathfind.py),
-    # so this is worth surfacing even though it's not a "missing field" in
-    # the usual sense.
+    # AP Group / Virtual Switch devices with no uplinks defined.
     no_uplinks = [
         d for d in devices
         if d["role"] in db.VIRTUAL_SWITCH_ROLES and not list_uplinks(conn, d["id"])
     ]
 
-    # Devices flagged "Requires PoE" where nothing in any port's trace
-    # actually supplies it -- the per-port version of this already shows as
-    # a red tag on the device page (see effective_poe_supplied); this is
-    # just the same check rolled up so it doesn't take clicking into every
-    # device to notice.
+    # Devices requiring PoE where nothing in any port's trace supplies it.
     poe_unmet = []
     for d in devices:
         if not d["poe_required"]:
@@ -1025,17 +872,9 @@ def data_quality_report(conn):
             continue
         poe_unmet.append(d)
 
-    # End devices rated faster than the switch/router port they ultimately
-    # connect to -- e.g. a NAS with a 10G NIC patched into a switch port
-    # that's only rated 1G, so it can never actually run faster than that.
-    # Only considers real, rated end-device ports (not another switch/
-    # router -- that's an uplink, a different concern; not Patch Panel or
-    # Internet, which aren't real rated interfaces; not virtual-switch
-    # member ports, which have no speed of their own). The trace is walked
-    # past any patch panels in between (pure pass-through, so "ignored"
-    # same as everywhere else) to find the next real device; if that isn't
-    # a switch/router, or its port has no speed set to compare against,
-    # there's nothing to flag.
+    # End devices rated faster than the switch/router port they connect
+    # to. Only considers real, rated end-device ports; the trace is walked
+    # past any patch panels in between to find the next real device.
     speed_mismatches = []
     for p in all_ports:
         if not p["speed"] or p["virtual_switch_id"]:

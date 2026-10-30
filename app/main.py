@@ -10,43 +10,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
 # Auth: one admin (read-write) account, one viewer (read-only) account,
-# signed into via an in-app login form + a server-side session cookie
-# (not the browser's native HTTP Basic Auth prompt -- that couldn't support
-# a real "log out" or a "change password" screen, which is why v1.4.0 moved
-# away from it).
+# signed in via an in-app login form and a server-side session cookie.
 #
-# Passwords are no longer configurable via environment variables (as of
-# v1.12.0 -- LINKLEDGER_ADMIN_PASS / LINKLEDGER_VIEWER_PASS and their old
-# PATCHBOOK_* names are no longer read at all). Instead, the very FIRST
-# time the app boots and creates these two account rows:
-#   - admin gets a known, documented default password (see README) --
-#     you're expected to sign in and change it; the app nags about this
-#     every login (see /api/whoami's admin_default_password field and the
-#     reminder modal in app.js) until you do.
-#   - viewer gets a random password, freshly generated for this
-#     installation and never written to a log or exposed anywhere. The
-#     admin doesn't need to know it -- if/when you want to actually use
-#     the viewer account, sign in as admin and set a password you know for
-#     it from the Settings page (no current password required, since
-#     that's an admin override on a different account, not a self-service
-#     change).
-# After that first boot, the database is the source of truth regardless of
-# what's in the environment -- these are first-run seeds, not ongoing
-# configuration.
-#
-# Account usernames are fixed ("admin" / "viewer"), not configurable --
-# there was no real need to rename them, so as of v1.13.0 the
-# LINKLEDGER_ADMIN_USER / LINKLEDGER_VIEWER_USER environment variables (and
-# their old PATCHBOOK_* names) are no longer read at all. Same as the
-# password change above, this only affects a brand-new install: an
-# existing deployment's account rows already exist in the database with
-# whatever usernames they were first created with, and that's completely
-# untouched.
+# On first boot, seed_accounts() creates both accounts: admin gets a known
+# default password (see README), viewer gets a random one. After that, the
+# database is the source of truth; account usernames and passwords are
+# managed from the Settings page, not environment variables.
 # ---------------------------------------------------------------------------
 
 _DEFAULT_ADMIN_PASS = "linkledger-admin"
@@ -54,16 +28,11 @@ _DEFAULT_ADMIN_PASS = "linkledger-admin"
 SESSION_COOKIE = "ll_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
-# In-memory session store -- this app runs as a single uvicorn process with
-# no workers, so a plain dict is sufficient and keeps things simple. Sessions
-# don't need to survive a restart (same as they never did under Basic Auth);
-# everyone just signs in again, same as any normal app restart/deploy.
+# In-memory session store. Does not survive a restart.
 SESSIONS: dict[str, dict] = {}
 
-# Paths reachable without a session: the SPA shell and its static assets
-# (no device data lives in them -- everything real comes from /api/* calls),
-# plus the auth-bootstrapping endpoints below. /api/logout is public too so
-# clicking it is always a safe no-op even if the session already expired.
+# Paths reachable without a session: the SPA shell, its static assets, and
+# the auth-bootstrapping endpoints below.
 PUBLIC_PATHS = {"/", "/api/login", "/api/logout", "/api/whoami", "/api/meta"}
 PUBLIC_PREFIXES = ("/static/",)
 
@@ -109,11 +78,7 @@ app.add_middleware(AuthMiddleware)
 @app.on_event("startup")
 def startup():
     db.init_db()
-    # A fresh random viewer password every process start is harmless even
-    # though it's only actually used the very first time (seed_accounts is
-    # a no-op on every boot after that) -- computing it here rather than at
-    # import time keeps it out of reach of anything that might import this
-    # module without meaning to trigger app startup (e.g. a test harness).
+    # Only used the first time accounts are seeded.
     viewer_seed_pass = secrets.token_urlsafe(16)
     with db.session() as conn:
         crud.seed_accounts(conn, ADMIN_USER, _DEFAULT_ADMIN_PASS, VIEWER_USER, viewer_seed_pass)
@@ -368,15 +333,10 @@ def api_delete_cable(cable_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Virtual switches (AP Group / Virtual Switch) -- uplinks
-#
-# An uplink is a real port elsewhere in the topology (an access point's
-# wired port, a hypervisor's physical NIC) that this virtual switch rides
-# on top of. That port keeps its own normal cable too -- this just also
-# marks it as this virtual switch's way out to the rest of the network.
-# Members (ports whose ONLY connection is a virtual switch, e.g. a
-# wireless client's NIC or a VM/container's vNIC) use PortUpdate's sibling
-# endpoint /api/ports/{port_id}/virtual-link above instead.
+# Virtual switches (AP Group / Virtual Switch) -- uplinks. An uplink is a
+# real port elsewhere in the topology that also serves as this virtual
+# switch's link to the network. Members are set via
+# /api/ports/{port_id}/virtual-link above instead.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/devices/{device_id}/uplinks")
@@ -398,9 +358,7 @@ def api_remove_uplink(uplink_id: int):
 
 # ---------------------------------------------------------------------------
 # LAGs -- bond two or more of a device's own physical ports into one
-# logical link (e.g. a NAS's bonded NICs, or a switch-to-switch trunk over
-# two cables). Each member port keeps its own individual cable; assigning
-# it to a LAG is a separate call (below), same pattern as uplinks.
+# logical link.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/devices/{device_id}/lags")
@@ -426,9 +384,8 @@ def api_set_port_lag(port_id: int, body: PortLagIn):
 
 
 # ---------------------------------------------------------------------------
-# Roles -- a fixed list, not user-editable (see db.ROLES). Which of them
-# show up in the Add/Edit device Role dropdown IS configurable though --
-# see /api/settings/roles below (same idea as /api/settings/speeds).
+# Roles -- fixed list (see db.ROLES). Which ones show up in the Add/Edit
+# device Role dropdown is configurable via /api/settings/roles below.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/roles")
@@ -448,10 +405,8 @@ def api_set_role_settings(body: EnabledRolesIn):
 
 
 # ---------------------------------------------------------------------------
-# Sites -- a small user-managed picklist for devices.site, unlike role's
-# fixed list (see db.py's `sites` table comment and crud.py's Sites
-# section for why). Read access for everyone (same as roles); creating,
-# renaming, and deleting are admin-only since they change shared settings.
+# Sites -- a user-managed picklist for devices.site. Read access for
+# everyone; creating, renaming, and deleting are admin-only.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/sites")
@@ -476,9 +431,8 @@ def api_delete_site(site_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Interface speed picker settings -- which of the recognized speeds show up
-# in the port speed dropdown (see crud.get_enabled_speeds's docstring for
-# why this can never make an existing port's speed value invalid).
+# Interface speed picker settings -- which recognized speeds show up in
+# the port speed dropdown.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/settings/speeds")
@@ -502,12 +456,7 @@ def api_reports():
 
 
 # ---------------------------------------------------------------------------
-# Reports-tab visibility setting -- which of the checks above actually get
-# shown (see crud.get_enabled_reports's docstring). Same shape and same
-# admin-only-to-change contract as /api/settings/speeds and /api/settings/
-# roles above. "all" carries the display title alongside each key so the
-# Settings page and the Reports tab both render the same title without
-# either one hardcoding its own copy.
+# Reports-tab visibility setting -- which of the checks above are shown.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/settings/reports")
@@ -532,19 +481,15 @@ def api_set_report_settings(body: EnabledReportsIn):
 def api_find_path(a: int, b: int, port_a: Optional[int] = None, port_b: Optional[int] = None,
                    uplink_a: Optional[int] = None, uplink_b: Optional[int] = None):
     # uplink_a/uplink_b optionally pin the search to one specific uplink of
-    # an AP Group / Virtual Switch the corresponding NIC is a member of,
-    # instead of leaving it to the search to pick whichever uplink gives
-    # the shortest route -- see pathfind.find_path()'s docstring.
+    # an AP Group / Virtual Switch the corresponding NIC is a member of.
     return handle(pathfind.find_path, a, b, port_a_id=port_a, port_b_id=port_b,
                   uplink_a_id=uplink_a, uplink_b_id=uplink_b)
 
 
 # ---------------------------------------------------------------------------
-# Backup / Restore -- a single .zip with all three CSVs (devices, ports,
-# cables) plus a small metadata file noting when the backup was made and
-# which LinkLedger version made it. Backup is available to both accounts
-# (read-only, same as everything else a viewer can see); Restore is admin
-# only, since it replaces data.
+# Backup / Restore -- a single .zip bundling the CSV exports plus a small
+# metadata file. Backup is available to both accounts; Restore is admin
+# only.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/backup")
@@ -636,10 +581,8 @@ def _invalidate_sessions_for_role(role: str):
 
 @app.post("/api/account/change-password", dependencies=[Depends(require_admin)])
 def api_change_password(body: ChangePasswordIn, request: Request, response: Response):
-    # Admin-only: this changes the caller's OWN account, and only the admin
-    # account can sign in and reach this endpoint at all -- the viewer
-    # account has no self-service password change (see
-    # /api/admin/set-viewer-password below, which the admin uses instead).
+    # Changes the caller's own account. The viewer has no self-service
+    # password change -- see /api/admin/set-viewer-password below.
     role = request.state.role
     if len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="new password must be at least 8 characters")
@@ -648,9 +591,8 @@ def api_change_password(body: ChangePasswordIn, request: Request, response: Resp
     if not account:
         raise HTTPException(status_code=403, detail="current password is incorrect")
 
-    # Changing a password invalidates every session on this account,
-    # including this request's own -- then a fresh one is issued below so
-    # the tab that just changed it doesn't get logged out too.
+    # Invalidate every session on this account, then issue a fresh one so
+    # this request isn't logged out too.
     _invalidate_sessions_for_role(role)
     _set_session_cookie(response, account["role"], account["username"])
     return {"ok": True}
@@ -658,12 +600,8 @@ def api_change_password(body: ChangePasswordIn, request: Request, response: Resp
 
 @app.post("/api/admin/set-viewer-password", dependencies=[Depends(require_admin)])
 def api_set_viewer_password(body: SetViewerPasswordIn):
-    # Admin sets the viewer account's password directly -- no current
-    # password needed, since this is an admin override on someone else's
-    # account, not a self-service change. Every existing viewer session
-    # (on any device) is invalidated; there's no "stay signed in on this
-    # device" case here the way there is for changing your own password,
-    # since the admin doing this isn't signed in as the viewer.
+    # Admin override: sets the viewer's password directly and invalidates
+    # every existing viewer session.
     if len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="new password must be at least 8 characters")
     handle(crud.set_password, "viewer", body.new_password)
