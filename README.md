@@ -5,6 +5,8 @@ is physically and logically connected together. You can search a device, see
 every port, and see exactly what's on the other end of the cable, including
 straight through patch panels.
 
+![Browsing devices in LinkLedger](docs/screenshots/overview.png)
+
 Single container, SQLite (no separate database to run), full add/edit/
 delete control over devices, ports, and cables. A fresh deployment starts
 completely empty, ready for you to add your own topology.
@@ -26,6 +28,31 @@ physically and logically connected.
 The Dockerfile itself is straightforward (standard `python:3.12-slim` + pip
 install + uvicorn); if you hit anything odd on first boot, please open an
 issue.
+
+## A closer look
+
+Every device's page lists each port, what it's connected to, and the VLANs,
+PoE, speed, and LAG details that go with it — including connections that
+pass straight through a patch panel to whatever's on the other side.
+
+![A switch's device page, showing per-port connections, VLANs, PoE, and LAG membership](docs/screenshots/device-detail.png)
+
+Patch panels get their own view pairing each rear (wall-run) port with its
+front (switch-side) port, so you can see both ends of a passthrough at a glance.
+
+![A patch panel's device page, pairing each rear port with its front port](docs/screenshots/patch-panel.png)
+
+The path finder traces a route between any two devices or ports, following
+cables through switches and patch panels and reporting shared VLANs and the
+slowest link along the way.
+
+![A path finder result tracing a route from a client, through a patch panel, to a switch port](docs/screenshots/path-finder.png)
+
+And the Reports tab flags data-quality issues across your topology — devices
+missing a site or model, unused ports, PoE devices not actually getting power,
+and more.
+
+![The Reports tab, flagging unused ports and other data-quality issues](docs/screenshots/reports.png)
 
 ## Setting up accounts
 
