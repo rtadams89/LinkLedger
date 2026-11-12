@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------

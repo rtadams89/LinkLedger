@@ -1104,13 +1104,28 @@ function mapRouteHeuristic(a, b) {
 // patch panel) into a shortcut other cables can cut through on their way
 // to a different jack, which used to produce a tangle of crossing lines
 // inside the box instead of each cable approaching its own port directly.
-const MAP_ROUTE_EXEMPT_RADIUS = 4;
+//
+// The exemption is deliberately anisotropic, not a plain radius: jacks
+// on a device sit in one or more horizontal rows (see mapBuildLayout), so
+// a generous radius in every direction let a route slide *sideways*
+// along the row through other ports' cells on its way to its own jack --
+// exactly the "cable cuts across several unrelated ports before landing
+// on its real one" look. MAP_ROUTE_EXEMPT_RADIUS_X stays at 0 -- the
+// jack's own grid column only, nothing either side -- so a route can
+// only approach a jack head-on from directly above/below it; ports sit
+// much closer together (MAP_JACK, 22px) than the routing grid's own
+// resolution (MAP_ROUTE_CELL, 14px), so even a 1-cell margin each side
+// can still reach a neighboring jack. _Y is generous enough to span the
+// device's whole box top-to-bottom regardless of how many port rows it
+// has, so entry from either edge still reaches it.
+const MAP_ROUTE_EXEMPT_RADIUS_X = 0;
+const MAP_ROUTE_EXEMPT_RADIUS_Y = 6;
 function mapRouteExemptCells(grid, cell, devId) {
   const exempt = new Set();
   if (devId == null) return exempt;
   const { cols, rows, owner } = grid;
-  for (let dr = -MAP_ROUTE_EXEMPT_RADIUS; dr <= MAP_ROUTE_EXEMPT_RADIUS; dr++) {
-    for (let dc = -MAP_ROUTE_EXEMPT_RADIUS; dc <= MAP_ROUTE_EXEMPT_RADIUS; dc++) {
+  for (let dr = -MAP_ROUTE_EXEMPT_RADIUS_Y; dr <= MAP_ROUTE_EXEMPT_RADIUS_Y; dr++) {
+    for (let dc = -MAP_ROUTE_EXEMPT_RADIUS_X; dc <= MAP_ROUTE_EXEMPT_RADIUS_X; dc++) {
       const r = cell.r + dr, c = cell.c + dc;
       if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
       const idx = r * cols + c;
@@ -1238,12 +1253,22 @@ function mapRouteSimplify(grid, cellPath) {
 // segments (one purely horizontal, one purely vertical) so the whole
 // path, lead-in stub included, only ever turns at 45 or 90 degrees.
 // Returns [a, b] unchanged if the direct line is already aligned.
-function mapRouteOrthogonalize(a, b) {
+//
+// `jackIsA` says which end is the exact jack (true for a lead-in, where
+// the route starts at the jack; false for a lead-out, where it ends at
+// one) -- the elbow always goes at {jack's x, other point's y}, so the
+// segment touching the jack is the VERTICAL leg and the horizontal leg
+// stays out at the grid point's y, away from the jack's own row. Jacks
+// on a device always sit in a horizontal row (see mapBuildLayout), so
+// picking the elbow by whichever of dx/dy was larger (the old approach)
+// could send the horizontal leg right along the jack's row at its own
+// y -- visually cutting across whatever other jacks were in the way.
+function mapRouteOrthogonalize(a, b, jackIsA) {
   const dx = b.x - a.x, dy = b.y - a.y;
   if (Math.abs(dx) < 0.05 || Math.abs(dy) < 0.05 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 0.05) {
     return [a, b];
   }
-  const elbow = Math.abs(dx) >= Math.abs(dy) ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
+  const elbow = jackIsA ? { x: a.x, y: b.y } : { x: b.x, y: a.y };
   return [a, elbow, b];
 }
 
@@ -1451,9 +1476,9 @@ function drawMap(opts) {
       // Swap the arbitrary stub between the exact jack and the nearest
       // grid point for an orthogonal lead-in/out, so even that stub
       // only ever turns at 45/90 degrees (see mapRouteOrthogonalize).
-      const leadIn = mapRouteOrthogonalize(a, grid_pts[0]);
+      const leadIn = mapRouteOrthogonalize(a, grid_pts[0], true);
       leadIn.pop();
-      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b);
+      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b, false);
       leadOut.shift();
       points = mapSimplifyPolyline([...leadIn, ...grid_pts, ...leadOut]);
     } else {
@@ -1475,9 +1500,9 @@ function drawMap(opts) {
     if (cellPath && cellPath.length) {
       mapRouteMarkUsage(grid, cellPath);
       const grid_pts = mapRouteSimplify(grid, cellPath);
-      const leadIn = mapRouteOrthogonalize(a, grid_pts[0]);
+      const leadIn = mapRouteOrthogonalize(a, grid_pts[0], true);
       leadIn.pop();
-      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b);
+      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b, false);
       leadOut.shift();
       points = mapSimplifyPolyline([...leadIn, ...grid_pts, ...leadOut]);
     } else {
