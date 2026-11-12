@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -73,6 +73,23 @@ def require_admin(request: Request):
 
 app = FastAPI(title="LinkLedger")
 app.add_middleware(AuthMiddleware)
+
+
+@app.middleware("http")
+async def add_static_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        # Without an explicit Cache-Control header, browsers fall back to
+        # heuristic caching and can keep serving an old app.js/style.css
+        # for a long time on an ordinary reload -- only a hard refresh
+        # (which bypasses the cache entirely) was picking up changes.
+        # "no-cache" still lets the browser keep a cached copy, but makes
+        # it revalidate with the server first every time; StaticFiles
+        # already sends ETag/Last-Modified, so an unchanged file comes
+        # back as a cheap 304 and only an actually-changed one is
+        # re-downloaded.
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.on_event("startup")

@@ -1326,20 +1326,43 @@ function mapCollectVLinks(devices) {
     // or Virtual Switch whose members are all wireless/virtual (nothing
     // but other dashed lines) renders with no visible connection at all,
     // even when it has a perfectly real uplink back to its host.
-    if (dev.members) dev.members.forEach(m => out.push({ port_id: m.port_id, vs_id: dev.id }));
-    if (dev.uplinks) dev.uplinks.forEach(u => out.push({ port_id: u.port_id, vs_id: dev.id }));
+    if (dev.members) dev.members.forEach(m => out.push({ port_id: m.port_id, device_id: m.device_id, vs_id: dev.id }));
+    if (dev.uplinks) dev.uplinks.forEach(u => out.push({ port_id: u.port_id, device_id: u.device_id, vs_id: dev.id }));
   });
   return out;
 }
 
-function mapVLinkSVG(vl, highlighted) {
-  const a = mapJackAbs(vl.port_id);
-  const b = mapAnchorAbs(vl.vs_id);
-  if (!a || !b) return "";
+// Like mapCableSVG: `points` is the already-routed polyline (same grid
+// router cables use -- see drawMap), so a virtual link no longer draws a
+// raw straight line that can cut straight through an unrelated device's
+// box sitting between the member/uplink and the switch. That mattered
+// for more than looks: a plain SVG line is hit-testable along its own
+// paint by default, so a vlink crossing a device box could silently eat
+// clicks meant for that device (reported as "clicking the map is not
+// opening some devices" -- the AP Group's long uplink line happened to
+// run right over the Internet node's box). mapHitSplit keeps that from
+// recurring the same way it already does for cables.
+function mapVLinkSVG(vl, points, highlighted) {
+  if (!points || points.length < 2) return "";
+  const d = mapPolylinePath(points);
   const stroke = highlighted ? "#2563eb" : "#94a3b8";
+  const aOrigin = MAP_NODE_ORIGIN[vl.device_id], aBoxDim = MAP_NODE_BOX[vl.device_id];
+  const bOrigin = MAP_NODE_ORIGIN[vl.vs_id], bBoxDim = MAP_NODE_BOX[vl.vs_id];
+  const aBox = aOrigin && aBoxDim ? { origin: aOrigin, box: aBoxDim } : null;
+  const bBox = bOrigin && bBoxDim ? { origin: bOrigin, box: bBoxDim } : null;
+  const { thinA, fatMid } = mapHitSplit(points, aBox, bBox);
+  const hitParts = [];
+  if (thinA.length >= 2) hitParts.push(`<path class="map-edge-hit" d="${mapPolylinePath(thinA)}" fill="none" stroke="transparent" stroke-width="6"></path>`);
+  if (fatMid.length >= 2) hitParts.push(`<path class="map-edge-hit" d="${mapPolylinePath(fatMid)}" fill="none" stroke="transparent" stroke-width="12"></path>`);
+  // No hit path at all over the stretch inside the switch's OWN box
+  // (thinB, discarded) -- unlike a real cable endpoint, a virtual
+  // switch has no physical jack for this line to legitimately enter,
+  // it just terminates at mapAnchorAbs's center point, so clicking
+  // anywhere on the switch's node should always open the device, never
+  // the vlink popover.
   return `<g class="map-vlink" data-vport="${vl.port_id}" data-vdevice="${vl.vs_id}">
-    <line class="map-edge-hit" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="transparent" stroke-width="12"></line>
-    <line class="map-vlink-line" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${stroke}" stroke-width="1.4" stroke-dasharray="4 3"></line>
+    ${hitParts.join("")}
+    <path class="map-vlink-line" d="${d}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-dasharray="4 3" pointer-events="none"></path>
   </g>`;
 }
 
@@ -1438,7 +1461,30 @@ function drawMap(opts) {
     }
     return mapCableSVG(c, points, !!(hl && hl.cableIds.has(c.id)));
   }).join("");
-  const vlinksHTML = vlinks.map(vl => mapVLinkSVG(vl, !!(hl && hl.jackKeys.has(vl.port_id)))).join("");
+  const vlinksHTML = vlinks.map(vl => {
+    const a = mapJackAbs(vl.port_id);
+    const b = mapAnchorAbs(vl.vs_id);
+    if (!a || !b) return "";
+    // Routed through the same grid the cables above use (see
+    // mapRouteCable) instead of a raw straight line, so a virtual link
+    // doesn't cut through -- and intercept clicks on -- some unrelated
+    // device sitting between the member/uplink and the switch.
+    const aCell = mapRouteCellOf(grid, a.x, a.y), bCell = mapRouteCellOf(grid, b.x, b.y);
+    const cellPath = mapRouteCable(grid, aCell, bCell, vl.device_id, vl.vs_id);
+    let points;
+    if (cellPath && cellPath.length) {
+      mapRouteMarkUsage(grid, cellPath);
+      const grid_pts = mapRouteSimplify(grid, cellPath);
+      const leadIn = mapRouteOrthogonalize(a, grid_pts[0]);
+      leadIn.pop();
+      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b);
+      leadOut.shift();
+      points = mapSimplifyPolyline([...leadIn, ...grid_pts, ...leadOut]);
+    } else {
+      points = [a, b]; // boxed in somehow -- fall back to a straight line
+    }
+    return mapVLinkSVG(vl, points, !!(hl && hl.jackKeys.has(vl.port_id)));
+  }).join("");
   const boxesHTML = devices.map(d => mapNodeBoxSVG(d)).join("");
   const jacksHTML = devices.map(d => mapNodeJacksSVG(d)).join("");
 
@@ -1496,10 +1542,10 @@ function mapUpdateEdgesForDevice(devId) {
     if (owner !== devId && vdev !== devId) return;
     const a = mapJackAbs(vport), b = mapAnchorAbs(vdev);
     if (!a || !b) return;
-    g.querySelectorAll("line").forEach(line => {
-      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-    });
+    // Same live-drag-preview shortcut as cables above: a plain straight
+    // line while dragging, re-routed for real by drawMap() on drop.
+    const d = `M${a.x.toFixed(1)},${a.y.toFixed(1)} L${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+    g.querySelectorAll("path").forEach(path => path.setAttribute("d", d));
   });
 }
 
