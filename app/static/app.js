@@ -798,6 +798,12 @@ let PENDING_MAP_HIGHLIGHT = null;
 let MAP_DRAG = null;
 let MAP_PAN = null;
 let MAP_SUPPRESS_CLICK = false;
+// The cable/vlink group currently under the pointer, or null. Letting a
+// specific cable be traced by just hovering it (see mapSetHoverEdge)
+// matters most on a busy diagram -- e.g. a dense run of patch-panel-to-
+// switch cables where several routes pass close enough together that
+// it's hard to tell by eye alone where any one of them starts and ends.
+let MAP_HOVER_EL = null;
 
 function mapIndexPorts(data) {
   const idx = {};
@@ -1446,6 +1452,9 @@ function mapFitToAll(devices) {
 
 function drawMap(opts) {
   opts = opts || {};
+  // svg.innerHTML gets replaced wholesale below, so any element the
+  // hover state above still references is about to be detached.
+  MAP_HOVER_EL = null;
   const devices = mapFilteredDevices();
   mapBuildLayout(devices);
   if (opts.fit === "highlight") mapFitToHighlight();
@@ -1644,6 +1653,21 @@ function mapShowVLinkPopover(vlinkEl, e) {
     <div class="map-pop-row"><a class="link" onclick="viewDevice(${vsId})">${esc(vs.name)}</a> ${roleBadge(vs.role)}</div>`);
 }
 
+// Highlights whichever cable/vlink group is currently under the pointer
+// (or clears the highlight when `el` is null) and raises it to the very
+// top of the SVG's paint order -- appendChild on an already-attached
+// node just moves it to be its parent's last child, no clone/re-render
+// involved, so this is cheap to call on every pointermove.
+function mapSetHoverEdge(el) {
+  if (MAP_HOVER_EL === el) return;
+  if (MAP_HOVER_EL) MAP_HOVER_EL.classList.remove("map-line-hover");
+  MAP_HOVER_EL = el;
+  if (MAP_HOVER_EL) {
+    MAP_HOVER_EL.classList.add("map-line-hover");
+    MAP_HOVER_EL.parentNode.appendChild(MAP_HOVER_EL);
+  }
+}
+
 function mapAttachHandlers(svg) {
   svg.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -1676,8 +1700,17 @@ function mapAttachHandlers(svg) {
       MAP_VIEW.tx = MAP_PAN.origTx + (e.clientX - MAP_PAN.startX);
       MAP_VIEW.ty = MAP_PAN.origTy + (e.clientY - MAP_PAN.startY);
       mapApplyViewport();
+    } else {
+      // Idle hover: highlight whichever cable/vlink is under the cursor,
+      // same elementFromPoint pattern the click handler uses (real DOM
+      // hit-test, not e.target, which pointer capture can retarget).
+      const real = document.elementFromPoint(e.clientX, e.clientY);
+      const hoverEl = real && (real.closest(".map-edge") || real.closest(".map-vlink"));
+      mapSetHoverEdge(hoverEl || null);
     }
   });
+
+  svg.addEventListener("pointerleave", () => mapSetHoverEdge(null));
 
   svg.addEventListener("pointerup", async (e) => {
     // Release capture before the click event fires -- otherwise a

@@ -157,6 +157,14 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
 #mapSvg:active { cursor:grabbing; }
 .map-node-draggable { cursor:grab; }
 .map-jack, .map-edge, .map-vlink { cursor:pointer; }
+/* Lets a single cable be traced by eye in a busy diagram just by
+   hovering it -- see mapSetHoverEdge, which also raises the hovered
+   group to the front of the SVG's paint order. A CSS rule like this
+   beats the element's own stroke="..." attribute regardless of order,
+   since presentation attributes sit below author stylesheets in the
+   cascade, so no !important is needed here. */
+.map-edge.map-line-hover .map-edge-line { stroke:#2563eb; stroke-width:3; }
+.map-vlink.map-line-hover .map-vlink-line { stroke:#2563eb; stroke-width:2.4; }
 .map-popover { position:absolute; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.14); padding:10px 12px; font-size:12px; max-width:260px; z-index:30; }
 .map-pop-title { font-weight:700; margin-bottom:6px; }
 .map-pop-row { margin-bottom:6px; }
