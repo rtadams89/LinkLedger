@@ -1317,9 +1317,17 @@ function mapCableSVG(c, points, highlighted) {
 function mapCollectVLinks(devices) {
   const out = [];
   devices.forEach(dev => {
-    if (VIRTUAL_SWITCH_ROLES.includes(dev.role) && dev.members) {
-      dev.members.forEach(m => out.push({ port_id: m.port_id, vs_id: dev.id }));
-    }
+    if (!VIRTUAL_SWITCH_ROLES.includes(dev.role)) return;
+    // Members (ports whose *only* connection is this virtual switch) and
+    // uplinks (a real port elsewhere that keeps its own cable too, but
+    // also bridges into this virtual switch -- see db.py's schema notes
+    // on virtual_switch_uplinks) both get a dashed virtual-link line to
+    // the switch's anchor. Without the uplink half of this, an AP Group
+    // or Virtual Switch whose members are all wireless/virtual (nothing
+    // but other dashed lines) renders with no visible connection at all,
+    // even when it has a perfectly real uplink back to its host.
+    if (dev.members) dev.members.forEach(m => out.push({ port_id: m.port_id, vs_id: dev.id }));
+    if (dev.uplinks) dev.uplinks.forEach(u => out.push({ port_id: u.port_id, vs_id: dev.id }));
   });
   return out;
 }
@@ -1612,11 +1620,20 @@ function mapAttachHandlers(svg) {
       if (moved) {
         MAP_SUPPRESS_CLICK = true;
         const origin = MAP_NODE_ORIGIN[devId], box = MAP_NODE_BOX[devId];
+        const x = origin.x + box.width / 2, y = origin.y + box.height / 2;
         try {
           await api(`/api/devices/${devId}/position`, {
             method: "PUT",
-            body: JSON.stringify({ x: origin.x + box.width / 2, y: origin.y + box.height / 2 }),
+            body: JSON.stringify({ x, y }),
           });
+          // The PUT above only updates the server; MAP_DATA.devices is a
+          // plain in-memory snapshot that nothing else refreshes, so
+          // without this the drawMap() call below re-derives the layout
+          // from the device's *old* (or still-null) pos_x/pos_y and the
+          // node visually snaps right back to wherever it was before the
+          // drag, undoing the drop entirely.
+          const dev = MAP_DATA.devices.find(d => d.id === devId);
+          if (dev) { dev.pos_x = x; dev.pos_y = y; }
         } catch (err) { showToast(err.message, true); }
         drawMap(); // swap the straight-line drag preview for the real routed paths, keeping the current view
       }
