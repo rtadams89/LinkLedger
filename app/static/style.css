@@ -144,6 +144,26 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
 .vlan-note-diff { background:#ffedd5; color:#c2410c; }
 .vlan-note-unknown { background:#f1f5f9; color:var(--muted); }
 
+/* Map tab -- SVG network diagram (see renderMapView() in app.js). */
+.map-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+.map-zoom-controls { display:flex; gap:4px; }
+.map-canvas-wrap {
+  position:relative; border:1px solid var(--border); border-radius:10px; overflow:hidden;
+  background:
+    linear-gradient(90deg, #f1f5f9 1px, transparent 1px) 0 0/24px 24px,
+    linear-gradient(#f1f5f9 1px, transparent 1px) 0 0/24px 24px, #fbfcfe;
+}
+#mapSvg { display:block; cursor:grab; touch-action:none; }
+#mapSvg:active { cursor:grabbing; }
+.map-node-draggable { cursor:grab; }
+.map-jack, .map-edge, .map-vlink { cursor:pointer; }
+.map-popover { position:absolute; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.14); padding:10px 12px; font-size:12px; max-width:260px; z-index:30; }
+.map-pop-title { font-weight:700; margin-bottom:6px; }
+.map-pop-row { margin-bottom:6px; }
+.map-pop-row:last-child { margin-bottom:0; }
+.map-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--muted); margin-top:10px; align-items:center; }
+.map-legend-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+
 /* Printing (see "Print" button on a device's card). Hidden on screen;
    @media print below reveals this and strips non-paper UI. */
 .print-meta { display:none; }

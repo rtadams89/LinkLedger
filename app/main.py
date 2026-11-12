@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -122,6 +122,12 @@ class DeviceUpdate(BaseModel):
     site: Optional[str] = None
     notes: Optional[str] = None
     poe_required: Optional[bool] = None
+    ports_per_row: Optional[int] = None
+
+
+class PositionIn(BaseModel):
+    x: float
+    y: float
 
 
 class PortIn(BaseModel):
@@ -257,6 +263,11 @@ def api_delete_device(device_id: int):
     return {"ok": True}
 
 
+@app.put("/api/devices/{device_id}/position", dependencies=[Depends(require_admin)])
+def api_set_device_position(device_id: int, body: PositionIn):
+    return handle(crud.set_device_position, device_id, body.x, body.y)
+
+
 # ---------------------------------------------------------------------------
 # Ports
 # ---------------------------------------------------------------------------
@@ -330,6 +341,15 @@ def api_create_cable(body: CableIn):
 def api_delete_cable(cable_id: int):
     handle(crud.delete_cable, cable_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Map -- every device (with its ports/LAGs) and every cable in one call.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/topology")
+def api_get_topology():
+    return handle(crud.get_topology)
 
 
 # ---------------------------------------------------------------------------

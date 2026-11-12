@@ -161,16 +161,19 @@ async function renderView(state) {
   document.getElementById("tabBrowse").classList.toggle("active", tab === "browse");
   document.getElementById("tabDevice").classList.toggle("active", tab === "device");
   document.getElementById("tabPath").classList.toggle("active", tab === "path");
+  document.getElementById("tabMap").classList.toggle("active", tab === "map");
   document.getElementById("tabReports").classList.toggle("active", tab === "reports");
   document.getElementById("browseView").style.display = tab === "browse" ? "block" : "none";
   document.getElementById("deviceView").style.display = tab === "device" ? "block" : "none";
   document.getElementById("pathView").style.display = tab === "path" ? "block" : "none";
+  document.getElementById("mapView").style.display = tab === "map" ? "block" : "none";
   document.getElementById("reportsView").style.display = tab === "reports" ? "block" : "none";
   // Hidden until a device has been viewed at least once.
   document.getElementById("tabDevice").style.display = lastViewedDeviceId ? "" : "none";
 
   if (tab === "device" && state.id) await renderDeviceView(state.id, state.port);
   else if (tab === "path") await renderPathFinder();
+  else if (tab === "map") await renderMapView();
   else if (tab === "reports") await renderReportsView();
   else await renderBrowseHome();
 }
@@ -748,11 +751,13 @@ async function submitFindPath() {
     const vlanClass = p.vlan_note.status === "same" ? "vlan-note-same"
       : p.vlan_note.status === "different" ? "vlan-note-diff" : "vlan-note-unknown";
 
+    LAST_PATH_RESULT = p;
     resultBox.innerHTML = `
       <div class="card">
         <div class="path-summary">
           ${speedTag(p.overall_speed) || `<span class="note">Speed not tagged along this path</span>`}
           ${p.routed_via_router ? `<span class="tag" style="background:#ffedd5;color:#c2410c;">Routes through a Router/Firewall</span>` : `<span class="tag" style="background:#dcfce7;color:#15803d;">Direct switch path -- no router hop</span>`}
+          <button class="btn small" onclick="showPathOnMap()">Show on map</button>
         </div>
         <div class="vlan-note ${vlanClass}">${esc(p.vlan_note.detail)}</div>
         <div class="path-chain">${hops}</div>
@@ -760,6 +765,562 @@ async function submitFindPath() {
   } catch (e) {
     resultBox.innerHTML = `<div class="card"><div class="error-msg">${esc(e.message)}</div></div>`;
   }
+}
+
+// Last successful /api/path result, kept so "Show on map" can re-derive a
+// highlight without re-querying.
+let LAST_PATH_RESULT = null;
+
+// ---------------------------------------------------------------------------
+// Map -- a to-scale graphical layout of every device and cable, drawn as
+// plain SVG. Each device's ports wrap into rows the same way the physical
+// device does (see ports_per_row in the Edit device modal), so a patch
+// panel split across two rows of 12 looks like one on the map. A patch
+// panel's front/rear pair renders as a single jack, since that's the same
+// physical point with a cable on each side; everything else gets one jack
+// per port. LAG members and multiple patch-panel runs each keep their own
+// line (offset slightly apart) since they're really separate cables.
+// ---------------------------------------------------------------------------
+const MAP_JACK = 22;
+const MAP_JACK_R = 5;
+const MAP_PAD = 10;
+const MAP_HEADER = 22;
+
+let MAP_DATA = null;
+let MAP_PORT_BY_ID = {};
+let MAP_CABLED_PORTS = new Set();
+let MAP_NODE_ORIGIN = {};  // device_id -> {x,y}, top-left, mutable (dragging)
+let MAP_NODE_BOX = {};     // device_id -> {width, height, cols, rows, positions:[{ports,x,y}]}
+let MAP_PORT_JACK = {};    // port_id -> {devId, x, y} (local to the owning node)
+let MAP_VIEW = { scale: 1, tx: 40, ty: 40 };
+let MAP_HIGHLIGHT = null;  // {deviceIds:Set, jackKeys:Set(port_id), cableIds:Set} or null
+let PENDING_MAP_HIGHLIGHT = null;
+let MAP_DRAG = null;
+let MAP_PAN = null;
+let MAP_SUPPRESS_CLICK = false;
+
+function mapIndexPorts(data) {
+  const idx = {};
+  data.devices.forEach(d => (d.ports || []).forEach(p => { idx[p.id] = { ...p, device_id: d.id, device_name: d.name }; }));
+  return idx;
+}
+
+function mapCabledPortIds(data) {
+  const s = new Set();
+  data.cables.forEach(c => { s.add(c.a_port_id); s.add(c.b_port_id); });
+  return s;
+}
+
+// Groups a patch panel's ports into front/rear pairs (one jack each);
+// every other device just gets one position per port. Ordered by id, same
+// as the device's own port list.
+function mapDevicePositions(dev) {
+  const ports = dev.ports || [];
+  if (dev.role === "Patch Panel") {
+    const byId = new Map(ports.map(p => [p.id, p]));
+    const seen = new Set();
+    const groups = [];
+    ports.forEach(p => {
+      if (seen.has(p.id)) return;
+      const other = p.pair_port_id ? byId.get(p.pair_port_id) : null;
+      if (other) { seen.add(p.id); seen.add(other.id); groups.push({ key: Math.min(p.id, other.id), ports: [p, other] }); }
+      else { seen.add(p.id); groups.push({ key: p.id, ports: [p] }); }
+    });
+    groups.sort((a, b) => a.key - b.key);
+    return groups;
+  }
+  return ports.map(p => ({ key: p.id, ports: [p] }));
+}
+
+function mapNodeBox(dev) {
+  const positions = mapDevicePositions(dev);
+  const cols = (dev.ports_per_row && dev.ports_per_row > 0) ? dev.ports_per_row : (positions.length || 1);
+  const rows = positions.length ? Math.ceil(positions.length / cols) : 0;
+  const gridW = positions.length ? Math.min(positions.length, cols) * MAP_JACK : 0;
+  const labelW = Math.max(100, dev.name.length * 6.5 + 24);
+  const width = Math.max(labelW, gridW + MAP_PAD * 2);
+  const height = MAP_HEADER + (rows ? rows * MAP_JACK + MAP_PAD : 14);
+  return { positions, cols, rows, width, height };
+}
+
+// Grid fallback, grouped by site, for any device with no saved position
+// yet -- just a starting point until it's dragged into its real spot.
+function mapAutoPlace(devices) {
+  const bySite = {};
+  devices.forEach(d => { (bySite[d.site || "(no site)"] ||= []).push(d); });
+  const placed = {};
+  let siteRow = 0;
+  Object.keys(bySite).sort().forEach(site => {
+    const list = bySite[site].slice().sort((a, b) => a.name.localeCompare(b.name));
+    const perRow = 6;
+    list.forEach((d, i) => {
+      placed[d.id] = { x: 140 + (i % perRow) * 220, y: siteRow * 260 + 90 + Math.floor(i / perRow) * 170 };
+    });
+    siteRow++;
+  });
+  return placed;
+}
+
+function mapBuildLayout(devices) {
+  MAP_NODE_ORIGIN = {}; MAP_NODE_BOX = {}; MAP_PORT_JACK = {};
+  const auto = mapAutoPlace(devices);
+  devices.forEach(dev => {
+    const { positions, cols, rows, width, height } = mapNodeBox(dev);
+    const center = (dev.pos_x != null && dev.pos_y != null) ? { x: dev.pos_x, y: dev.pos_y } : auto[dev.id];
+    MAP_NODE_ORIGIN[dev.id] = { x: center.x - width / 2, y: center.y - height / 2 };
+    const gridW = Math.min(positions.length, cols) * MAP_JACK;
+    const startX = (width - gridW) / 2 + MAP_JACK / 2;
+    const localPositions = positions.map((pos, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      const lx = startX + col * MAP_JACK;
+      const ly = MAP_HEADER + MAP_PAD / 2 + row * MAP_JACK + MAP_JACK / 2;
+      pos.ports.forEach(p => { MAP_PORT_JACK[p.id] = { devId: dev.id, x: lx, y: ly }; });
+      return { ...pos, x: lx, y: ly };
+    });
+    MAP_NODE_BOX[dev.id] = { width, height, cols, rows, positions: localPositions };
+  });
+}
+
+function mapJackAbs(portId) {
+  const j = MAP_PORT_JACK[portId];
+  if (!j) return null;
+  const o = MAP_NODE_ORIGIN[j.devId];
+  return o ? { x: o.x + j.x, y: o.y + j.y } : null;
+}
+function mapAnchorAbs(devId) {
+  const box = MAP_NODE_BOX[devId], o = MAP_NODE_ORIGIN[devId];
+  return (box && o) ? { x: o.x + box.width / 2, y: o.y + box.height / 2 } : null;
+}
+
+function mapPositionStatus(pos, cabled) {
+  const linked = pos.ports.map(p => cabled.has(p.id) || !!p.virtual_switch_id);
+  if (linked.every(Boolean)) return "full";
+  if (linked.some(Boolean)) return "partial";
+  return "empty";
+}
+
+function mapNodeSVG(dev) {
+  const box = MAP_NODE_BOX[dev.id];
+  const origin = MAP_NODE_ORIGIN[dev.id];
+  const bg = ROLE_COLORS[dev.role] || "#e2e8f0";
+  const fg = ROLE_TEXT[dev.role] || "#334155";
+  const hl = MAP_HIGHLIGHT;
+  const nodeHL = !!(hl && hl.deviceIds.has(dev.id));
+  const jacks = box.positions.map(pos => {
+    const status = mapPositionStatus(pos, MAP_CABLED_PORTS);
+    const fill = status === "full" ? "#22c55e" : status === "partial" ? "#f59e0b" : "#cbd5e1";
+    const ids = pos.ports.map(p => p.id).join(",");
+    const isHL = !!(hl && pos.ports.some(p => hl.jackKeys.has(p.id)));
+    return `<circle class="map-jack${isHL ? " map-jack-hl" : ""}" data-dev="${dev.id}" data-ports="${ids}" cx="${pos.x}" cy="${pos.y}" r="${MAP_JACK_R}" fill="${fill}" stroke="${isHL ? "#2563eb" : "#fff"}" stroke-width="${isHL ? 2.5 : 1}"><title>${esc(pos.ports.map(p => p.name).join(" / "))}</title></circle>`;
+  }).join("");
+  const draggable = isAdmin() ? " map-node-draggable" : "";
+  return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
+    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}"></rect>
+    <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}</text>
+    ${jacks}
+  </g>`;
+}
+
+// Cables sharing the same two devices (LAG members, more than one
+// patch-panel run between the same pair) get a perpendicular offset so
+// each one stays visible as its own line instead of overlapping.
+function mapEdgeOffsets(cables) {
+  const groups = {};
+  cables.forEach(c => {
+    const key = [c.a_device_id, c.b_device_id].sort((x, y) => x - y).join(":");
+    (groups[key] ||= []).push(c);
+  });
+  const offsets = {};
+  Object.values(groups).forEach(list => {
+    const n = list.length;
+    list.forEach((c, i) => { offsets[c.id] = (i - (n - 1) / 2) * 6; });
+  });
+  return offsets;
+}
+
+// Each cable is a group with a fat invisible "hit" line (SVG hit-testing
+// only covers what's actually painted, and a 1.6px line is hard to click)
+// plus the thin line that's actually seen.
+function mapCableSVG(c, offset, highlighted) {
+  const a = mapJackAbs(c.a_port_id) || mapAnchorAbs(c.a_device_id);
+  const b = mapJackAbs(c.b_port_id) || mapAnchorAbs(c.b_device_id);
+  if (!a || !b) return "";
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+  const ox = (-dy / len) * offset, oy = (dx / len) * offset;
+  const stroke = highlighted ? "#2563eb" : "#94a3b8";
+  const width = highlighted ? 3 : 1.6;
+  const x1 = a.x + ox, y1 = a.y + oy, x2 = b.x + ox, y2 = b.y + oy;
+  return `<g class="map-edge" data-cable-id="${c.id}" data-a-port="${c.a_port_id}" data-b-port="${c.b_port_id}" data-offset="${offset}">
+    <line class="map-edge-hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="12"></line>
+    <line class="map-edge-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round"></line>
+  </g>`;
+}
+
+function mapCollectVLinks(devices) {
+  const out = [];
+  devices.forEach(dev => {
+    if (VIRTUAL_SWITCH_ROLES.includes(dev.role) && dev.members) {
+      dev.members.forEach(m => out.push({ port_id: m.port_id, vs_id: dev.id }));
+    }
+  });
+  return out;
+}
+
+function mapVLinkSVG(vl, highlighted) {
+  const a = mapJackAbs(vl.port_id);
+  const b = mapAnchorAbs(vl.vs_id);
+  if (!a || !b) return "";
+  const stroke = highlighted ? "#2563eb" : "#94a3b8";
+  return `<g class="map-vlink" data-vport="${vl.port_id}" data-vdevice="${vl.vs_id}">
+    <line class="map-edge-hit" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="transparent" stroke-width="12"></line>
+    <line class="map-vlink-line" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${stroke}" stroke-width="1.4" stroke-dasharray="4 3"></line>
+  </g>`;
+}
+
+function mapFilteredDevices() {
+  const sel = document.getElementById("map_siteFilter");
+  const site = sel ? sel.value : "";
+  return site ? MAP_DATA.devices.filter(d => d.site === site) : MAP_DATA.devices;
+}
+
+// Bounding box (in world/layout coordinates) of a set of device ids,
+// using whatever's already in MAP_NODE_ORIGIN/MAP_NODE_BOX -- call
+// mapBuildLayout() first.
+function mapBoundsFor(deviceIds) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  deviceIds.forEach(id => {
+    const o = MAP_NODE_ORIGIN[id], box = MAP_NODE_BOX[id];
+    if (!o || !box) return;
+    minX = Math.min(minX, o.x); minY = Math.min(minY, o.y);
+    maxX = Math.max(maxX, o.x + box.width); maxY = Math.max(maxY, o.y + box.height);
+  });
+  return isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+
+// Sets MAP_VIEW so the given world-space bounds are centered and fully
+// visible in the current SVG viewport.
+function mapApplyFit(bounds, padding, maxScale) {
+  if (!bounds) return;
+  const svg = document.getElementById("mapSvg");
+  const vw = svg.clientWidth || 900, vh = svg.clientHeight || 640;
+  const bw = (bounds.maxX - bounds.minX) + padding * 2, bh = (bounds.maxY - bounds.minY) + padding * 2;
+  const scale = Math.max(0.1, Math.min(maxScale, Math.min(vw / bw, vh / bh)));
+  MAP_VIEW.scale = scale;
+  MAP_VIEW.tx = -((bounds.minX - padding) * scale) + (vw - bw * scale) / 2;
+  MAP_VIEW.ty = -((bounds.minY - padding) * scale) + (vh - bh * scale) / 2;
+}
+
+function mapFitToHighlight() {
+  if (!MAP_HIGHLIGHT || !MAP_HIGHLIGHT.deviceIds.size) return;
+  mapApplyFit(mapBoundsFor(MAP_HIGHLIGHT.deviceIds), 70, 1.8);
+}
+
+function mapFitToAll(devices) {
+  mapApplyFit(mapBoundsFor(devices.map(d => d.id)), 60, 1.2);
+}
+
+function drawMap(opts) {
+  opts = opts || {};
+  const devices = mapFilteredDevices();
+  mapBuildLayout(devices);
+  if (opts.fit === "highlight") mapFitToHighlight();
+  else mapFitToAll(devices);
+  MAP_CABLED_PORTS = mapCabledPortIds(MAP_DATA);
+
+  const deviceIds = new Set(devices.map(d => d.id));
+  const cables = MAP_DATA.cables.filter(c => deviceIds.has(c.a_device_id) && deviceIds.has(c.b_device_id));
+  const offsets = mapEdgeOffsets(cables);
+  const vlinks = mapCollectVLinks(devices);
+  const hl = MAP_HIGHLIGHT;
+
+  const edgesHTML = cables.map(c => mapCableSVG(c, offsets[c.id] || 0, !!(hl && hl.cableIds.has(c.id)))).join("");
+  const vlinksHTML = vlinks.map(vl => mapVLinkSVG(vl, !!(hl && hl.jackKeys.has(vl.port_id)))).join("");
+  const nodesHTML = devices.map(d => mapNodeSVG(d)).join("");
+
+  const svg = document.getElementById("mapSvg");
+  svg.innerHTML = `<g id="mapViewport" transform="translate(${MAP_VIEW.tx},${MAP_VIEW.ty}) scale(${MAP_VIEW.scale})">${edgesHTML}${vlinksHTML}${nodesHTML}</g>`;
+}
+
+function mapApplyViewport() {
+  const vp = document.getElementById("mapViewport");
+  if (vp) vp.setAttribute("transform", `translate(${MAP_VIEW.tx},${MAP_VIEW.ty}) scale(${MAP_VIEW.scale})`);
+}
+
+function mapZoomAt(factor, mx, my) {
+  const newScale = Math.max(0.2, Math.min(3, MAP_VIEW.scale * factor));
+  const worldX = (mx - MAP_VIEW.tx) / MAP_VIEW.scale;
+  const worldY = (my - MAP_VIEW.ty) / MAP_VIEW.scale;
+  MAP_VIEW.scale = newScale;
+  MAP_VIEW.tx = mx - worldX * newScale;
+  MAP_VIEW.ty = my - worldY * newScale;
+  mapApplyViewport();
+}
+function mapZoom(factor) {
+  const svg = document.getElementById("mapSvg");
+  const rect = svg.getBoundingClientRect();
+  mapZoomAt(factor, rect.width / 2, rect.height / 2);
+}
+function mapResetView() {
+  mapFitToAll(mapFilteredDevices());
+  mapApplyViewport();
+}
+
+function mapUpdateEdgesForDevice(devId) {
+  const svg = document.getElementById("mapSvg");
+  svg.querySelectorAll(".map-edge").forEach(g => {
+    const aPort = Number(g.dataset.aPort), bPort = Number(g.dataset.bPort);
+    const aOwner = MAP_PORT_JACK[aPort] && MAP_PORT_JACK[aPort].devId;
+    const bOwner = MAP_PORT_JACK[bPort] && MAP_PORT_JACK[bPort].devId;
+    if (aOwner !== devId && bOwner !== devId) return;
+    const a = mapJackAbs(aPort), b = mapJackAbs(bPort);
+    if (!a || !b) return;
+    const offset = Number(g.dataset.offset || 0);
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const ox = (-dy / len) * offset, oy = (dx / len) * offset;
+    g.querySelectorAll("line").forEach(line => {
+      line.setAttribute("x1", a.x + ox); line.setAttribute("y1", a.y + oy);
+      line.setAttribute("x2", b.x + ox); line.setAttribute("y2", b.y + oy);
+    });
+  });
+  svg.querySelectorAll(".map-vlink").forEach(g => {
+    const vport = Number(g.dataset.vport), vdev = Number(g.dataset.vdevice);
+    const owner = MAP_PORT_JACK[vport] && MAP_PORT_JACK[vport].devId;
+    if (owner !== devId && vdev !== devId) return;
+    const a = mapJackAbs(vport), b = mapAnchorAbs(vdev);
+    if (!a || !b) return;
+    g.querySelectorAll("line").forEach(line => {
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+    });
+  });
+}
+
+function mapMoveNodeTo(devId, x, y) {
+  MAP_NODE_ORIGIN[devId] = { x, y };
+  const g = document.getElementById(`mapNode-${devId}`);
+  if (g) g.setAttribute("transform", `translate(${x},${y})`);
+  mapUpdateEdgesForDevice(devId);
+}
+
+function mapCableForPort(portId) {
+  return MAP_DATA.cables.find(c => c.a_port_id === portId || c.b_port_id === portId);
+}
+
+function mapShowPopover(e, html) {
+  const pop = document.getElementById("mapPopover");
+  pop.innerHTML = html;
+  pop.style.display = "block";
+  const wrap = document.getElementById("mapCanvasWrap").getBoundingClientRect();
+  const left = Math.max(4, Math.min(e.clientX - wrap.left + 12, wrap.width - 260));
+  const top = Math.max(4, Math.min(e.clientY - wrap.top + 12, wrap.height - 120));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
+function mapShowJackPopover(jackEl, e) {
+  const portIds = jackEl.dataset.ports.split(",").map(Number);
+  const devId = Number(jackEl.dataset.dev);
+  const dev = MAP_DATA.devices.find(d => d.id === devId);
+  if (!dev) return;
+  const rows = portIds.map(pid => {
+    const p = MAP_PORT_BY_ID[pid];
+    if (!p) return "";
+    const cable = mapCableForPort(pid);
+    let other;
+    if (cable) {
+      const otherName = cable.a_port_id === pid ? cable.b_device_name : cable.a_device_name;
+      const otherPort = cable.a_port_id === pid ? cable.b_port_name : cable.a_port_name;
+      other = `&rarr; ${esc(otherName)} (${esc(cleanPortLabel(otherPort))})`;
+    } else if (p.virtual_switch_id) {
+      const vs = MAP_DATA.devices.find(d => d.id === p.virtual_switch_id);
+      other = `&rarr; ${esc(vs ? vs.name : "virtual switch")} <span class="note">(wireless/virtual link)</span>`;
+    } else {
+      other = `<span class="note">not connected</span>`;
+    }
+    return `<div class="map-pop-row"><span class="port-name">${esc(cleanPortLabel(p.name))}</span> ${p.speed ? speedTag(p.speed) : ""} ${p.poe_supply ? poeSupplyTag(true) : ""}<br>${other}</div>`;
+  }).join("");
+  mapShowPopover(e, `<div class="map-pop-title"><a class="link" onclick="viewDevice(${devId})">${esc(dev.name)}</a> ${roleBadge(dev.role)}</div>${rows}`);
+}
+
+function mapShowCablePopover(edgeEl, e) {
+  const c = MAP_DATA.cables.find(x => x.id === Number(edgeEl.dataset.cableId));
+  if (!c) return;
+  mapShowPopover(e, `
+    <div class="map-pop-title">Cable${c.label ? ": " + esc(c.label) : ""}</div>
+    <div class="map-pop-row"><a class="link" onclick="viewDevice(${c.a_device_id})">${esc(c.a_device_name)}</a><br><span class="port-name">${esc(cleanPortLabel(c.a_port_name))}</span></div>
+    <div class="map-pop-row"><a class="link" onclick="viewDevice(${c.b_device_id})">${esc(c.b_device_name)}</a><br><span class="port-name">${esc(cleanPortLabel(c.b_port_name))}</span></div>
+    <div class="map-pop-row">${c.effective_speed ? speedTag(c.effective_speed) : `<span class="note">speed not tagged</span>`}</div>`);
+}
+
+function mapShowVLinkPopover(vlinkEl, e) {
+  const portId = Number(vlinkEl.dataset.vport), vsId = Number(vlinkEl.dataset.vdevice);
+  const p = MAP_PORT_BY_ID[portId];
+  const vs = MAP_DATA.devices.find(d => d.id === vsId);
+  if (!p || !vs) return;
+  mapShowPopover(e, `
+    <div class="map-pop-title">Wireless / virtual link</div>
+    <div class="map-pop-row"><a class="link" onclick="viewDevice(${p.device_id})">${esc(p.device_name)}</a><br><span class="port-name">${esc(cleanPortLabel(p.name))}</span></div>
+    <div class="map-pop-row"><a class="link" onclick="viewDevice(${vsId})">${esc(vs.name)}</a> ${roleBadge(vs.role)}</div>`);
+}
+
+function mapAttachHandlers(svg) {
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    mapZoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+
+  svg.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".map-jack, .map-edge, .map-vlink")) return;
+    const nodeEl = e.target.closest(".map-node");
+    if (nodeEl && isAdmin()) {
+      const devId = Number(nodeEl.dataset.deviceId);
+      const origin = MAP_NODE_ORIGIN[devId];
+      svg.setPointerCapture(e.pointerId);
+      MAP_DRAG = { devId, startX: e.clientX, startY: e.clientY, origX: origin.x, origY: origin.y, moved: false };
+      e.preventDefault();
+    } else if (!nodeEl) {
+      svg.setPointerCapture(e.pointerId);
+      MAP_PAN = { startX: e.clientX, startY: e.clientY, origTx: MAP_VIEW.tx, origTy: MAP_VIEW.ty };
+    }
+  });
+
+  svg.addEventListener("pointermove", (e) => {
+    if (MAP_DRAG) {
+      const dx = (e.clientX - MAP_DRAG.startX) / MAP_VIEW.scale;
+      const dy = (e.clientY - MAP_DRAG.startY) / MAP_VIEW.scale;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) MAP_DRAG.moved = true;
+      mapMoveNodeTo(MAP_DRAG.devId, MAP_DRAG.origX + dx, MAP_DRAG.origY + dy);
+    } else if (MAP_PAN) {
+      MAP_VIEW.tx = MAP_PAN.origTx + (e.clientX - MAP_PAN.startX);
+      MAP_VIEW.ty = MAP_PAN.origTy + (e.clientY - MAP_PAN.startY);
+      mapApplyViewport();
+    }
+  });
+
+  svg.addEventListener("pointerup", async (e) => {
+    if (MAP_DRAG) {
+      const { devId, moved } = MAP_DRAG;
+      MAP_DRAG = null;
+      if (moved) {
+        MAP_SUPPRESS_CLICK = true;
+        const origin = MAP_NODE_ORIGIN[devId], box = MAP_NODE_BOX[devId];
+        try {
+          await api(`/api/devices/${devId}/position`, {
+            method: "PUT",
+            body: JSON.stringify({ x: origin.x + box.width / 2, y: origin.y + box.height / 2 }),
+          });
+        } catch (err) { showToast(err.message, true); }
+      }
+    }
+    MAP_PAN = null;
+  });
+
+  svg.addEventListener("click", (e) => {
+    if (MAP_SUPPRESS_CLICK) { MAP_SUPPRESS_CLICK = false; return; }
+    const jackEl = e.target.closest(".map-jack");
+    if (jackEl) { mapShowJackPopover(jackEl, e); return; }
+    const edgeEl = e.target.closest(".map-edge");
+    if (edgeEl) { mapShowCablePopover(edgeEl, e); return; }
+    const vlinkEl = e.target.closest(".map-vlink");
+    if (vlinkEl) { mapShowVLinkPopover(vlinkEl, e); return; }
+    const nodeEl = e.target.closest(".map-node");
+    if (nodeEl) { viewDevice(Number(nodeEl.dataset.deviceId)); return; }
+    document.getElementById("mapPopover").style.display = "none";
+  });
+}
+
+function updateMapHighlightNote() {
+  const note = document.getElementById("map_highlightNote");
+  if (note) note.style.display = MAP_HIGHLIGHT ? "" : "none";
+}
+
+function clearMapHighlight() {
+  MAP_HIGHLIGHT = null;
+  drawMap();
+  updateMapHighlightNote();
+}
+
+// Turns a /api/path result into the set of device/jack/cable ids to
+// highlight, by walking its segments in order and looking up the cable
+// connecting each segment boundary (an internal rear->front patch-panel
+// pairing has no cable of its own, so it's simply skipped).
+function computeHighlightFromPath(p) {
+  const deviceIds = new Set(), jackKeys = new Set(), cableIds = new Set();
+  const flatPorts = [];
+  p.segments.forEach(seg => {
+    deviceIds.add(seg.device_id);
+    seg.ports.forEach(pp => { if (pp.port_id != null) { jackKeys.add(pp.port_id); flatPorts.push(pp.port_id); } });
+  });
+  const cableByPair = {};
+  MAP_DATA.cables.forEach(c => { cableByPair[[c.a_port_id, c.b_port_id].sort((x, y) => x - y).join(":")] = c.id; });
+  for (let i = 0; i < flatPorts.length - 1; i++) {
+    const key = [flatPorts[i], flatPorts[i + 1]].sort((x, y) => x - y).join(":");
+    if (cableByPair[key] != null) cableIds.add(cableByPair[key]);
+  }
+  return { deviceIds, jackKeys, cableIds };
+}
+
+function showPathOnMap() {
+  if (!LAST_PATH_RESULT) return;
+  PENDING_MAP_HIGHLIGHT = LAST_PATH_RESULT;
+  navigateTo({ tab: "map" });
+}
+
+function mapShellHTML() {
+  const sites = Array.from(new Set(MAP_DATA.devices.map(d => d.site).filter(Boolean))).sort();
+  return `
+  <div class="card map-card">
+    <div class="map-toolbar">
+      <select id="map_siteFilter" onchange="drawMap()">
+        <option value="">All sites</option>
+        ${sites.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}
+      </select>
+      <div class="map-zoom-controls">
+        <button class="btn small" onclick="mapZoom(1.25)" title="Zoom in">+</button>
+        <button class="btn small" onclick="mapZoom(0.8)" title="Zoom out">&minus;</button>
+        <button class="btn small" onclick="mapResetView()">Reset view</button>
+      </div>
+      <span class="note" id="map_highlightNote" style="display:none;">Showing a path &middot; <a class="link" onclick="clearMapHighlight()">Clear</a></span>
+      ${isAdmin() ? `<span class="note">Drag a device to place it -- positions save automatically.</span>` : ""}
+    </div>
+    <div class="map-canvas-wrap" id="mapCanvasWrap">
+      <svg id="mapSvg" width="100%" height="640"></svg>
+      <div class="map-popover" id="mapPopover" style="display:none;"></div>
+    </div>
+    <div class="map-legend">
+      <span><span class="map-legend-dot" style="background:#22c55e"></span>Connected</span>
+      <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
+      <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
+      <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
+    </div>
+  </div>`;
+}
+
+async function renderMapView() {
+  const root = document.getElementById("mapView");
+  root.innerHTML = `<div class="card"><span class="note">Loading map...</span></div>`;
+  let data;
+  try {
+    data = await api("/api/topology");
+  } catch (e) {
+    root.innerHTML = `<div class="card"><div class="error-msg">${esc(e.message)}</div></div>`;
+    return;
+  }
+  MAP_DATA = data;
+  MAP_PORT_BY_ID = mapIndexPorts(data);
+  root.innerHTML = mapShellHTML();
+  mapAttachHandlers(document.getElementById("mapSvg"));
+  let fit = "all";
+  if (PENDING_MAP_HIGHLIGHT) {
+    MAP_HIGHLIGHT = computeHighlightFromPath(PENDING_MAP_HIGHLIGHT);
+    PENDING_MAP_HIGHLIGHT = null;
+    fit = "highlight";
+  } else {
+    MAP_HIGHLIGHT = null;
+  }
+  drawMap({ fit });
+  updateMapHighlightNote();
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +1332,7 @@ function renderModal(html) { document.getElementById("modalRoot").innerHTML = `<
 // --- Add/edit device ---
 async function openDeviceModal(deviceId) {
   const [d, roleSettings, sites] = await Promise.all([
-    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false }),
+    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false, ports_per_row: null }),
     api("/api/settings/roles"),
     api("/api/sites"),
   ]);
@@ -804,6 +1365,7 @@ async function openDeviceModal(deviceId) {
     <div class="field checkbox-field">
       <label><input type="checkbox" id="f_poe" ${d.poe_required ? "checked" : ""}> Requires PoE</label>
     </div>
+    ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.)</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitDevice(${deviceId || "null"})">${deviceId ? "Save" : "Add"}</button>
@@ -819,6 +1381,8 @@ async function submitDevice(deviceId) {
     notes: document.getElementById("f_notes").value,
     poe_required: document.getElementById("f_poe").checked,
   };
+  const pprEl = document.getElementById("f_portsPerRow");
+  if (pprEl) body.ports_per_row = pprEl.value ? parseInt(pprEl.value, 10) : 0;
   try {
     if (deviceId) {
       await api(`/api/devices/${deviceId}`, { method: "PUT", body: JSON.stringify(body) });

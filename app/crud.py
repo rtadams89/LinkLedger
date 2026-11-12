@@ -90,6 +90,12 @@ def update_device(conn, device_id: int, **fields):
             updates[k] = v.strip()
         elif k == "poe_required":
             updates[k] = int(bool(v))
+        elif k == "ports_per_row":
+            # 0 clears it back to a single row (NULL); the map layout wrap
+            # otherwise has to be a positive number of positions.
+            if v < 0:
+                raise ConflictError("ports per row can't be negative")
+            updates[k] = None if v == 0 else int(v)
     if not updates:
         return get_device(conn, device_id)
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -100,11 +106,31 @@ def update_device(conn, device_id: int, **fields):
     return get_device(conn, device_id)
 
 
+def set_device_position(conn, device_id: int, x: float, y: float):
+    get_device(conn, device_id)
+    conn.execute("UPDATE devices SET pos_x = ?, pos_y = ? WHERE id = ?", (x, y, device_id))
+    return get_device(conn, device_id)
+
+
 def delete_device(conn, device_id: int):
     get_device(conn, device_id)
     # Unlink any ports joined to this device as a virtual switch.
     conn.execute("UPDATE ports SET virtual_switch_id = NULL WHERE virtual_switch_id = ?", (device_id,))
     conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+
+
+def get_topology(conn):
+    """Everything the Map tab needs in one call: every device with its own
+    ports/LAGs/uplinks/members, plus every cable (same shape as
+    list_cables())."""
+    devices = list_devices(conn)
+    for d in devices:
+        d["ports"] = list_ports(conn, d["id"])
+        d["lags"] = list_lags(conn, d["id"])
+        if d["role"] in db.VIRTUAL_SWITCH_ROLES:
+            d["uplinks"] = list_uplinks(conn, d["id"])
+            d["members"] = list_members(conn, d["id"])
+    return {"devices": devices, "cables": list_cables(conn)}
 
 
 # ---------------------------------------------------------------------------

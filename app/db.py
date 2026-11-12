@@ -155,6 +155,14 @@ def _migrate(conn):
     device_cols = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "poe_required" not in device_cols:
         conn.execute("ALTER TABLE devices ADD COLUMN poe_required INTEGER NOT NULL DEFAULT 0")
+    if "pos_x" not in device_cols:
+        # NULL means not yet placed on the map.
+        conn.execute("ALTER TABLE devices ADD COLUMN pos_x REAL")
+    if "pos_y" not in device_cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN pos_y REAL")
+    if "ports_per_row" not in device_cols:
+        # NULL means all ports/positions in a single row.
+        conn.execute("ALTER TABLE devices ADD COLUMN ports_per_row INTEGER")
 
     # Renamed "Workstation" role to "Client".
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")
