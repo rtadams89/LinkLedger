@@ -1711,7 +1711,7 @@ function mapShellHTML() {
       <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
       <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
       <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
-      <span class="note">Dashed outline = hidden device (off by default, e.g. clients/appliances)</span>
+      <span class="note">Dashed outline = hidden device (off by default, e.g. clients/appliances/servers)</span>
     </div>
   </div>`;
 }
@@ -1786,7 +1786,7 @@ async function openDeviceModal(deviceId) {
     </div>
     ${deviceId ? `<div class="field checkbox-field">
       <label><input type="checkbox" id="f_showOnMap" ${d.show_on_map ? "checked" : ""}> Show on map</label>
-      <span class="note">Off by default for Client and Appliance devices, to keep the Map tab from getting crowded.</span>
+      <span class="note">Off by default for Client, Appliance, and Server devices, to keep the Map tab from getting crowded.</span>
     </div>` : ""}
     ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.)</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
     <div class="modal-actions">
