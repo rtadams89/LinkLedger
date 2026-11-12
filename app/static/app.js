@@ -899,7 +899,13 @@ function mapPositionStatus(pos, cabled) {
   return "empty";
 }
 
-function mapNodeSVG(dev) {
+// Node rendering is split into two layers -- the box (rect+label) and
+// the jacks -- drawn on either side of the cable edges in drawMap(), so
+// a cable is visible crossing into its own endpoint device's box up to
+// the jack, instead of being hidden behind that device's opaque
+// rectangle (which used to make every cable look like it stopped at the
+// device's edge rather than reaching the specific port).
+function mapNodeBoxSVG(dev) {
   const box = MAP_NODE_BOX[dev.id];
   const origin = MAP_NODE_ORIGIN[dev.id];
   const bg = ROLE_COLORS[dev.role] || "#e2e8f0";
@@ -909,6 +915,17 @@ function mapNodeSVG(dev) {
   // Only drawn at all when "show hidden devices too" is on -- styled as a
   // dashed/dimmed box so it still reads as "normally hidden".
   const isHidden = !dev.show_on_map;
+  const draggable = isAdmin() ? " map-node-draggable" : "";
+  return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
+    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}" stroke-dasharray="${isHidden ? "4 2" : "none"}"></rect>
+    <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}${isHidden ? " (hidden)" : ""}</text>
+  </g>`;
+}
+
+function mapNodeJacksSVG(dev) {
+  const box = MAP_NODE_BOX[dev.id];
+  const origin = MAP_NODE_ORIGIN[dev.id];
+  const hl = MAP_HIGHLIGHT;
   const jacks = box.positions.map(pos => {
     const status = mapPositionStatus(pos, MAP_CABLED_PORTS);
     const fill = status === "full" ? "#22c55e" : status === "partial" ? "#f59e0b" : "#cbd5e1";
@@ -916,12 +933,7 @@ function mapNodeSVG(dev) {
     const isHL = !!(hl && pos.ports.some(p => hl.jackKeys.has(p.id)));
     return `<circle class="map-jack${isHL ? " map-jack-hl" : ""}" data-dev="${dev.id}" data-ports="${ids}" cx="${pos.x}" cy="${pos.y}" r="${MAP_JACK_R}" fill="${fill}" stroke="${isHL ? "#2563eb" : "#fff"}" stroke-width="${isHL ? 2.5 : 1}"><title>${esc(pos.ports.map(p => p.name).join(" / "))}</title></circle>`;
   }).join("");
-  const draggable = isAdmin() ? " map-node-draggable" : "";
-  return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
-    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}" stroke-dasharray="${isHidden ? "4 2" : "none"}"></rect>
-    <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}${isHidden ? " (hidden)" : ""}</text>
-    ${jacks}
-  </g>`;
+  return `<g class="map-node-jacks" id="mapNodeJacks-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">${jacks}</g>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,10 +1314,15 @@ function drawMap(opts) {
     return mapCableSVG(c, points, !!(hl && hl.cableIds.has(c.id)));
   }).join("");
   const vlinksHTML = vlinks.map(vl => mapVLinkSVG(vl, !!(hl && hl.jackKeys.has(vl.port_id)))).join("");
-  const nodesHTML = devices.map(d => mapNodeSVG(d)).join("");
+  const boxesHTML = devices.map(d => mapNodeBoxSVG(d)).join("");
+  const jacksHTML = devices.map(d => mapNodeJacksSVG(d)).join("");
 
   const svg = document.getElementById("mapSvg");
-  svg.innerHTML = `<g id="mapViewport" transform="translate(${MAP_VIEW.tx},${MAP_VIEW.ty}) scale(${MAP_VIEW.scale})">${edgesHTML}${vlinksHTML}${nodesHTML}</g>`;
+  // Layer order matters: boxes first, then edges/vlinks on top of them
+  // (so a cable is visible running into its own endpoint's box instead
+  // of disappearing behind it), then jacks on top of everything (so the
+  // port dot itself is never obscured by the line ending at it).
+  svg.innerHTML = `<g id="mapViewport" transform="translate(${MAP_VIEW.tx},${MAP_VIEW.ty}) scale(${MAP_VIEW.scale})">${boxesHTML}${edgesHTML}${vlinksHTML}${jacksHTML}</g>`;
 }
 
 function mapApplyViewport() {
@@ -1365,6 +1382,8 @@ function mapMoveNodeTo(devId, x, y) {
   MAP_NODE_ORIGIN[devId] = { x, y };
   const g = document.getElementById(`mapNode-${devId}`);
   if (g) g.setAttribute("transform", `translate(${x},${y})`);
+  const jacksG = document.getElementById(`mapNodeJacks-${devId}`);
+  if (jacksG) jacksG.setAttribute("transform", `translate(${x},${y})`);
   mapUpdateEdgesForDevice(devId);
 }
 
