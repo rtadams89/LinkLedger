@@ -27,10 +27,14 @@ from . import crud, db
 # import fine. The 4 Map columns are written on export and read on import
 # when present, but default sensibly (see _import_devices) when absent.
 DEVICE_CORE_COLUMNS = ["name", "role", "model", "site", "notes", "poe_required"]
-DEVICE_MAP_COLUMNS = ["pos_x", "pos_y", "ports_per_row", "show_on_map"]
+DEVICE_MAP_COLUMNS = ["pos_x", "pos_y", "ports_per_row", "show_on_map", "port_layout_mode"]
 DEVICE_COLUMNS = DEVICE_CORE_COLUMNS + DEVICE_MAP_COLUMNS
+# grid_row/grid_col are only meaningful while the owning device's
+# port_layout_mode is 'custom' (see DEVICE_MAP_COLUMNS above), but are
+# always exported/restored so switching a device back to custom later
+# doesn't lose previously-placed positions.
 PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with",
-                "wireless_link", "uplink_for", "lag"]
+                "wireless_link", "uplink_for", "lag", "grid_row", "grid_col"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
 SITE_COLUMNS = ["name"]
 ROLE_COLUMNS = ["role"]      # one row per currently-enabled role
@@ -106,6 +110,7 @@ def _export_devices(conn) -> bytes:
             "" if d["pos_y"] is None else d["pos_y"],
             "" if d["ports_per_row"] is None else d["ports_per_row"],
             _bool_cell(d["show_on_map"]),
+            d["port_layout_mode"],
         ])
     return out.getvalue().encode("utf-8")
 
@@ -148,7 +153,9 @@ def _export_ports(conn) -> bytes:
         if p["virtual_switch_id"] and p["virtual_switch_id"] in device_by_id:
             wireless_link = device_by_id[p["virtual_switch_id"]]["name"]
         w.writerow([p["device_name"], p["name"], p["speed"], p["vlans"], _bool_cell(p["poe_supply"]),
-                    pair_with, wireless_link, uplink_for.get(p["id"], ""), lag_name.get(p["id"], "")])
+                    pair_with, wireless_link, uplink_for.get(p["id"], ""), lag_name.get(p["id"], ""),
+                    "" if p["grid_row"] is None else p["grid_row"],
+                    "" if p["grid_col"] is None else p["grid_col"]])
     return out.getvalue().encode("utf-8")
 
 
@@ -280,14 +287,19 @@ def _import_devices(conn, rows):
         show_on_map_cell = row.get("show_on_map")
         show_on_map = (_yesno(show_on_map_cell) if show_on_map_cell not in (None, "")
                        else role not in db.MAP_HIDDEN_BY_DEFAULT_ROLES)
+        # Absent (older export) or unrecognized -> 'auto', same as a brand
+        # new device.
+        port_layout_mode = (row.get("port_layout_mode") or "").strip().lower()
+        if port_layout_mode not in ("auto", "custom"):
+            port_layout_mode = "auto"
         conn.execute(
             "INSERT INTO devices (name, role, model, site, notes, poe_required, pos_x, pos_y, "
-            "ports_per_row, show_on_map) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "ports_per_row, show_on_map, port_layout_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row["name"].strip(), role, (row.get("model") or "").strip(),
              (row.get("site") or "").strip(), (row.get("notes") or "").strip(),
              int(_yesno(row.get("poe_required"))),
              _float_cell(row.get("pos_x")), _float_cell(row.get("pos_y")),
-             _int_cell(row.get("ports_per_row")), int(show_on_map)),
+             _int_cell(row.get("ports_per_row")), int(show_on_map), port_layout_mode),
         )
 
 
@@ -345,9 +357,11 @@ def _import_ports(conn, rows):
     for row in rows:
         dname, pname = row["device_name"].strip(), row["port_name"].strip()
         cur = conn.execute(
-            "INSERT INTO ports (device_id, name, speed, vlans, poe_supply) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO ports (device_id, name, speed, vlans, poe_supply, grid_row, grid_col) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (device_ids[dname], pname, (row.get("speed") or "").strip(), (row.get("vlans") or "").strip(),
-             int(_yesno(row.get("poe_supply")))),
+             int(_yesno(row.get("poe_supply"))),
+             _int_cell(row.get("grid_row")), _int_cell(row.get("grid_col"))),
         )
         port_ids[(dname, pname)] = cur.lastrowid
 

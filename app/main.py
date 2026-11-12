@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.6.8"
+VERSION = "1.7.0"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -151,6 +151,20 @@ class PositionIn(BaseModel):
     y: float
 
 
+class PortLayoutModeIn(BaseModel):
+    mode: str
+
+
+class PortGridPositionIn(BaseModel):
+    port_id: int
+    grid_row: int
+    grid_col: int
+
+
+class PortGridPositionsIn(BaseModel):
+    positions: list[PortGridPositionIn]
+
+
 class PortIn(BaseModel):
     name: str
     speed: str = ""
@@ -288,6 +302,20 @@ def api_delete_device(device_id: int):
 @app.put("/api/devices/{device_id}/position", dependencies=[Depends(require_admin)])
 def api_set_device_position(device_id: int, body: PositionIn):
     return handle(crud.set_device_position, device_id, body.x, body.y)
+
+
+# ---------------------------------------------------------------------------
+# Free-form port layout -- see crud.set_port_layout_mode / set_port_grid_positions.
+# ---------------------------------------------------------------------------
+
+@app.put("/api/devices/{device_id}/port-layout-mode", dependencies=[Depends(require_admin)])
+def api_set_port_layout_mode(device_id: int, body: PortLayoutModeIn):
+    return handle(crud.set_port_layout_mode, device_id, body.mode)
+
+
+@app.put("/api/devices/{device_id}/port-grid", dependencies=[Depends(require_admin)])
+def api_set_port_grid_positions(device_id: int, body: PortGridPositionsIn):
+    return handle(crud.set_port_grid_positions, device_id, [p.model_dump() for p in body.positions])
 
 
 # ---------------------------------------------------------------------------

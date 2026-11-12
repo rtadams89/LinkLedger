@@ -120,6 +120,107 @@ def set_device_position(conn, device_id: int, x: float, y: float):
     return get_device(conn, device_id)
 
 
+# ---------------------------------------------------------------------------
+# Free-form port layout -- a device-level, per-port grid position used by
+# the Map tab instead of the sequential ports_per_row wrap (see
+# db.devices.port_layout_mode / db.ports.grid_row,grid_col). Edited via the
+# "Edit port layout" screen on the device page.
+# ---------------------------------------------------------------------------
+
+def _position_groups(conn, device_id: int):
+    """Groups a device's ports into the same "positions" the Map tab draws
+    one jack per: a Patch Panel's front/rear pair collapses into one
+    position since it's the same physical jack; every other device gets
+    one position per port. Ordered by each group's lowest port id (same
+    order as mapDevicePositions in app.js -- keep the two in sync)."""
+    device = get_device(conn, device_id)
+    ports = list_ports(conn, device_id)
+    if device["role"] == "Patch Panel":
+        by_id = {p["id"]: p for p in ports}
+        seen = set()
+        groups = []
+        for p in ports:
+            if p["id"] in seen:
+                continue
+            other = by_id.get(p["pair_port_id"]) if p["pair_port_id"] else None
+            if other:
+                seen.add(p["id"])
+                seen.add(other["id"])
+                groups.append({"key": min(p["id"], other["id"]), "port_ids": [p["id"], other["id"]]})
+            else:
+                seen.add(p["id"])
+                groups.append({"key": p["id"], "port_ids": [p["id"]]})
+        groups.sort(key=lambda g: g["key"])
+        return groups
+    return [{"key": p["id"], "port_ids": [p["id"]]} for p in ports]
+
+
+def set_port_layout_mode(conn, device_id: int, mode: str):
+    """Switches a device between 'auto' (ports wrap into rows of
+    ports_per_row, as always) and 'custom' (each position renders at its
+    own stored grid_row/grid_col -- see set_port_grid_positions).
+
+    Switching into 'custom' seeds a starting position for any position
+    group that doesn't have one yet, mirroring the device's current
+    ports_per_row wrap -- so the editor opens from something familiar
+    instead of a blank grid. A group that already has a saved position
+    (e.g. re-entering custom mode after switching back to auto) is left
+    alone."""
+    device = get_device(conn, device_id)
+    if mode not in ("auto", "custom"):
+        raise ConflictError("port layout mode must be 'auto' or 'custom'")
+    if mode == "custom":
+        groups = _position_groups(conn, device_id)
+        cols = device["ports_per_row"] if device["ports_per_row"] else (len(groups) or 1)
+        for i, g in enumerate(groups):
+            rows = [get_port(conn, pid) for pid in g["port_ids"]]
+            if any(r["grid_row"] is not None for r in rows):
+                continue
+            row, col = divmod(i, cols)
+            for pid in g["port_ids"]:
+                conn.execute("UPDATE ports SET grid_row = ?, grid_col = ? WHERE id = ?", (row, col, pid))
+    conn.execute("UPDATE devices SET port_layout_mode = ? WHERE id = ?", (mode, device_id))
+    return get_device(conn, device_id)
+
+
+def set_port_grid_positions(conn, device_id: int, positions: list[dict]):
+    """Bulk-sets free-form grid positions for this device's ports -- the
+    port-layout editor's Save action. `positions` is a list of
+    {port_id, grid_row, grid_col}. Every port referenced must belong to
+    this device. Two different positions (jacks) can't share one cell,
+    but a Patch Panel's own front/rear pair legitimately does, since
+    that's one physical jack rendered once."""
+    get_device(conn, device_id)
+    own_ports = list_ports(conn, device_id)
+    own_port_ids = {p["id"] for p in own_ports}
+    pair_of = {p["id"]: p["pair_port_id"] for p in own_ports}
+
+    seen_ports = set()
+    cell_owner = {}  # (row, col) -> port_id already placed there in this batch
+    for entry in positions:
+        port_id = entry["port_id"]
+        row, col = entry["grid_row"], entry["grid_col"]
+        if port_id not in own_port_ids:
+            raise ConflictError(f"port {port_id} doesn't belong to this device")
+        if port_id in seen_ports:
+            raise ConflictError(f"port {port_id} appears more than once")
+        seen_ports.add(port_id)
+        if row < 0 or col < 0:
+            raise ConflictError("grid row/column can't be negative")
+        cell = (row, col)
+        existing = cell_owner.get(cell)
+        if existing is not None and existing != pair_of.get(port_id):
+            raise ConflictError(f"row {row}, column {col} is already used by another port")
+        cell_owner[cell] = port_id
+
+    for entry in positions:
+        conn.execute(
+            "UPDATE ports SET grid_row = ?, grid_col = ? WHERE id = ?",
+            (entry["grid_row"], entry["grid_col"], entry["port_id"]),
+        )
+    return list_ports(conn, device_id)
+
+
 def delete_device(conn, device_id: int):
     get_device(conn, device_id)
     # Unlink any ports joined to this device as a virtual switch.

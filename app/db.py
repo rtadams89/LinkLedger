@@ -158,6 +158,16 @@ def _migrate(conn):
     if "lag_id" not in cols:
         # NULL means not part of a LAG.
         conn.execute("ALTER TABLE ports ADD COLUMN lag_id INTEGER")
+    if "grid_row" not in cols:
+        # Free-form port-layout grid position, only meaningful while the
+        # owning device's port_layout_mode is 'custom' (see below) -- NULL
+        # until the device is switched into custom mode or a new port is
+        # added to a device that's already in it (see crud.set_port_layout_mode
+        # / crud._next_custom_grid_slot for how a NULL position gets a
+        # sensible fallback at render/edit time).
+        conn.execute("ALTER TABLE ports ADD COLUMN grid_row INTEGER")
+    if "grid_col" not in cols:
+        conn.execute("ALTER TABLE ports ADD COLUMN grid_col INTEGER")
 
     device_cols = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "poe_required" not in device_cols:
@@ -170,6 +180,12 @@ def _migrate(conn):
     if "ports_per_row" not in device_cols:
         # NULL means all ports/positions in a single row.
         conn.execute("ALTER TABLE devices ADD COLUMN ports_per_row INTEGER")
+    if "port_layout_mode" not in device_cols:
+        # 'auto' wraps ports into rows of ports_per_row, same as always.
+        # 'custom' instead renders each port/pair at its own stored
+        # ports.grid_row/grid_col -- a free-form grid edited per device
+        # (see crud.set_port_layout_mode / set_port_grid_positions).
+        conn.execute("ALTER TABLE devices ADD COLUMN port_layout_mode TEXT NOT NULL DEFAULT 'auto'")
     if "show_on_map" not in device_cols:
         # Whether this device is drawn on the Map tab. Defaults to visible,
         # except we immediately hide any existing Client devices below --

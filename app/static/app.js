@@ -511,6 +511,7 @@ async function renderDeviceView(id, highlightPortId) {
         ${d.site ? `<span class="note">· ${esc(d.site)}</span>` : ""}
         <div class="spacer"></div>
         <button class="btn small" onclick="window.print()">Print</button>
+        ${d.ports && d.ports.length && !isVirtualSwitch ? `<button class="btn small admin-only" onclick="openPortLayoutModal(${d.id})">Edit port layout</button>` : ""}
         <button class="btn small admin-only" onclick="openDeviceModal(${d.id})">Edit</button>
         <button class="btn small danger admin-only" onclick='confirmDeleteDevice(${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'>Delete</button>
       </div>
@@ -838,11 +839,58 @@ function mapDevicePositions(dev) {
   return ports.map(p => ({ key: p.id, ports: [p] }));
 }
 
+// Shared by the Map tab's custom-mode rendering and the port-layout
+// editor (see openPortLayoutModal): reads each position's own stored
+// grid_row/grid_col when the WHOLE group (both ports of a patch-panel
+// pair) has one, and falls back to a deterministic slot -- appended in a
+// new row below whatever's already placed -- for a group that doesn't
+// (e.g. a port added to a device that's already in custom mode, before
+// ever being dragged anywhere). `fallbackCols` only bounds how those
+// fallback slots wrap; it has no effect once every group has a real
+// position. Returns {positions:[...{...group, row, col}], cols, rows}.
+function mapCustomGridLayout(positions, fallbackCols) {
+  const known = [], unknown = [];
+  positions.forEach(pos => {
+    const p0 = pos.ports[0];
+    if (p0.grid_row != null && p0.grid_col != null) known.push({ ...pos, row: p0.grid_row, col: p0.grid_col });
+    else unknown.push(pos);
+  });
+  let row = known.reduce((m, p) => Math.max(m, p.row), -1) + 1, col = 0;
+  unknown.forEach(pos => {
+    known.push({ ...pos, row, col });
+    col++;
+    if (col >= fallbackCols) { col = 0; row++; }
+  });
+  known.sort((a, b) => a.key - b.key);
+  const cols = known.length ? Math.max(...known.map(p => p.col)) + 1 : 0;
+  const rows = known.length ? Math.max(...known.map(p => p.row)) + 1 : 0;
+  return { positions: known, cols, rows };
+}
+
+// The current ports_per_row-wrap layout, expressed the same shape as
+// mapCustomGridLayout's return value -- used both as mapNodeBox's normal
+// ('auto' mode) path and as the port-layout editor's starting point when
+// a device hasn't been switched to a custom layout yet (see
+// openPortLayoutModal), so the editor opens from something familiar
+// instead of a blank grid.
+function mapAutoGridLayout(positions, portsPerRow) {
+  // wrapCols is how many positions fit before wrapping to the next row;
+  // cols is how many are actually ever occupied (e.g. 3 ports with
+  // ports_per_row=10 only ever use 3 columns, not 10) -- the box should
+  // size to the latter, not the configured wrap width.
+  const wrapCols = (portsPerRow && portsPerRow > 0) ? portsPerRow : (positions.length || 1);
+  const withCoords = positions.map((pos, i) => ({ ...pos, row: Math.floor(i / wrapCols), col: i % wrapCols }));
+  const rows = positions.length ? Math.ceil(positions.length / wrapCols) : 0;
+  const cols = positions.length ? Math.min(positions.length, wrapCols) : 0;
+  return { positions: withCoords, cols, rows };
+}
+
 function mapNodeBox(dev) {
-  const positions = mapDevicePositions(dev);
-  const cols = (dev.ports_per_row && dev.ports_per_row > 0) ? dev.ports_per_row : (positions.length || 1);
-  const rows = positions.length ? Math.ceil(positions.length / cols) : 0;
-  const gridW = positions.length ? Math.min(positions.length, cols) * MAP_JACK : 0;
+  const groups = mapDevicePositions(dev);
+  const { positions, cols, rows } = dev.port_layout_mode === "custom"
+    ? mapCustomGridLayout(groups, 12)
+    : mapAutoGridLayout(groups, dev.ports_per_row);
+  const gridW = cols * MAP_JACK;
   const labelW = Math.max(100, dev.name.length * 6.5 + 24);
   const width = Math.max(labelW, gridW + MAP_PAD * 2);
   const height = MAP_HEADER + (rows ? rows * MAP_JACK + MAP_PAD : 14);
@@ -918,12 +966,14 @@ function mapBuildLayout(devices) {
     const { positions, cols, rows, width, height } = mapNodeBox(dev);
     const center = (dev.pos_x != null && dev.pos_y != null) ? { x: dev.pos_x, y: dev.pos_y } : auto[dev.id];
     MAP_NODE_ORIGIN[dev.id] = { x: center.x - width / 2, y: center.y - height / 2 };
-    const gridW = Math.min(positions.length, cols) * MAP_JACK;
+    // Every position already carries its own row/col from mapNodeBox
+    // (sequential ports_per_row wrap in 'auto' mode, the device's own
+    // stored grid in 'custom' mode) -- just place it.
+    const gridW = cols * MAP_JACK;
     const startX = (width - gridW) / 2 + MAP_JACK / 2;
-    const localPositions = positions.map((pos, i) => {
-      const col = i % cols, row = Math.floor(i / cols);
-      const lx = startX + col * MAP_JACK;
-      const ly = MAP_HEADER + MAP_PAD / 2 + row * MAP_JACK + MAP_JACK / 2;
+    const localPositions = positions.map(pos => {
+      const lx = startX + pos.col * MAP_JACK;
+      const ly = MAP_HEADER + MAP_PAD / 2 + pos.row * MAP_JACK + MAP_JACK / 2;
       pos.ports.forEach(p => { MAP_PORT_JACK[p.id] = { devId: dev.id, x: lx, y: ly }; });
       return { ...pos, x: lx, y: ly };
     });
@@ -1863,7 +1913,10 @@ async function renderMapView() {
 // Modal plumbing
 // ---------------------------------------------------------------------------
 function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
-function renderModal(html) { document.getElementById("modalRoot").innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">${html}</div></div>`; }
+function renderModal(html, extraClass) {
+  document.getElementById("modalRoot").innerHTML =
+    `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal${extraClass ? " " + extraClass : ""}">${html}</div></div>`;
+}
 
 // --- Add/edit device ---
 async function openDeviceModal(deviceId) {
@@ -1905,7 +1958,13 @@ async function openDeviceModal(deviceId) {
       <label><input type="checkbox" id="f_showOnMap" ${d.show_on_map ? "checked" : ""}> Show on map</label>
       <span class="note">Off by default for Client, Appliance, and Server devices, to keep the Map tab from getting crowded.</span>
     </div>` : ""}
-    ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.)</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
+    ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.${d.port_layout_mode === "custom" ? " Ignored while this device uses a custom port layout, below." : ""})</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
+    ${deviceId && d.ports && d.ports.length && !VIRTUAL_SWITCH_ROLES.includes(d.role) ? `<div class="field">
+      <span class="note">${d.port_layout_mode === "custom"
+        ? "This device uses a custom free-form port layout on the Map tab."
+        : "This device's ports are laid out automatically (Ports per row, above) on the Map tab."}
+      <a class="link" onclick="closeModal(); openPortLayoutModal(${deviceId})">Edit port layout</a></span>
+    </div>` : ""}
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitDevice(${deviceId || "null"})">${deviceId ? "Save" : "Add"}</button>
@@ -1950,6 +2009,153 @@ async function confirmDeleteDevice(id, name) {
     if (lastViewedDeviceId === id) lastViewedDeviceId = null;
     await navigateTo({ tab: "browse" });
   } catch (e) { showToast(e.message, true); }
+}
+
+// --- Edit port layout -- a free-form per-port grid, maintained at the
+// device level and used by the Map tab instead of the sequential Ports
+// per row wrap once a device is switched into 'custom' mode (see
+// mapCustomGridLayout/mapAutoGridLayout in the Map section above). The
+// grid's own row/col numbers are purely a canvas-sizing/editing
+// convenience here -- only each position's own row/col is ever saved.
+// ---------------------------------------------------------------------------
+const PL_CELL = 44;
+const PL_MAX_GRID = 40;
+let PORT_LAYOUT_EDITOR = null;  // {deviceId, mode, cols, rows, positions:[{key,ports,row,col}]}
+
+function plChipLabel(pos) {
+  if (pos.ports.length > 1) {
+    // A patch-panel front/rear pair -- "12 (rear)"/"12 (front)" -> "12".
+    const m = pos.ports[0].name.match(/^(\d+)/);
+    return m ? m[1] : pos.ports.map(p => p.name).join(" / ");
+  }
+  return pos.ports[0].name;
+}
+
+async function openPortLayoutModal(deviceId) {
+  const d = await api(`/api/devices/${deviceId}`);
+  const groups = mapDevicePositions(d);
+  const layout = d.port_layout_mode === "custom"
+    ? mapCustomGridLayout(groups, 16)
+    : mapAutoGridLayout(groups, d.ports_per_row);
+  PORT_LAYOUT_EDITOR = {
+    deviceId,
+    deviceName: d.name,
+    mode: d.port_layout_mode,
+    cols: Math.max(layout.cols, 8),
+    rows: Math.max(layout.rows, 6),
+    positions: layout.positions.map(p => ({ key: p.key, ports: p.ports, row: p.row, col: p.col })),
+  };
+  renderModal(`
+    <h3>Edit port layout &mdash; ${esc(d.name)}</h3>
+    <p class="note">Drag a port (or a patch panel's paired front/rear jack) into any cell. Leave cells empty to
+      show a gap in the diagram -- e.g. for a switch's extra ports grouped off to one side.</p>
+    <div class="pl-toolbar">
+      <button class="btn small" onclick="plAddRow()">+ Row</button>
+      <button class="btn small" onclick="plAddCol()">+ Column</button>
+      <button class="btn small" onclick="plCompact()">Shrink to fit</button>
+      <div class="spacer"></div>
+      <button class="btn small" onclick="resetPortLayoutToAuto()" ${d.port_layout_mode === "custom" ? "" : "disabled"}>Reset to automatic layout</button>
+    </div>
+    <div id="plCanvasWrap" class="pl-canvas-wrap">
+      <div id="plCanvas" class="pl-canvas" ondragover="event.preventDefault()" ondrop="plDrop(event)"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="savePortLayout()">Save</button>
+    </div>`, "modal-wide");
+  renderPortLayoutGrid();
+}
+
+function renderPortLayoutGrid() {
+  const ed = PORT_LAYOUT_EDITOR;
+  const canvas = document.getElementById("plCanvas");
+  if (!ed || !canvas) return;
+  canvas.style.width = `${ed.cols * PL_CELL}px`;
+  canvas.style.height = `${ed.rows * PL_CELL}px`;
+  canvas.style.backgroundSize = `${PL_CELL}px ${PL_CELL}px`;
+  const inset = 3, size = PL_CELL - inset * 2;
+  canvas.innerHTML = ed.positions.map(pos => `
+    <div class="pl-chip" draggable="true" title="${esc(pos.ports.map(p => p.name).join(" / "))}"
+         style="left:${pos.col * PL_CELL + inset}px; top:${pos.row * PL_CELL + inset}px; width:${size}px; height:${size}px;"
+         ondragstart="plDragStart(event, '${esc(String(pos.key))}')">${esc(plChipLabel(pos))}</div>
+  `).join("");
+}
+
+function plDragStart(ev, key) {
+  ev.dataTransfer.setData("text/plain", key);
+  ev.dataTransfer.effectAllowed = "move";
+}
+
+function plDrop(ev) {
+  ev.preventDefault();
+  const key = ev.dataTransfer.getData("text/plain");
+  const ed = PORT_LAYOUT_EDITOR;
+  if (!ed) return;
+  const canvas = document.getElementById("plCanvas");
+  const rect = canvas.getBoundingClientRect();
+  let col = Math.floor((ev.clientX - rect.left) / PL_CELL);
+  let row = Math.floor((ev.clientY - rect.top) / PL_CELL);
+  col = Math.max(0, Math.min(col, ed.cols - 1));
+  row = Math.max(0, Math.min(row, ed.rows - 1));
+  const moving = ed.positions.find(p => String(p.key) === key);
+  if (!moving || (moving.row === row && moving.col === col)) return;
+  // Swap with whatever's already in that cell (if anything), instead of
+  // ever allowing two positions to overlap.
+  const target = ed.positions.find(p => p !== moving && p.row === row && p.col === col);
+  if (target) { target.row = moving.row; target.col = moving.col; }
+  moving.row = row; moving.col = col;
+  renderPortLayoutGrid();
+}
+
+function plAddRow() {
+  PORT_LAYOUT_EDITOR.rows = Math.min(PORT_LAYOUT_EDITOR.rows + 1, PL_MAX_GRID);
+  renderPortLayoutGrid();
+}
+
+function plAddCol() {
+  PORT_LAYOUT_EDITOR.cols = Math.min(PORT_LAYOUT_EDITOR.cols + 1, PL_MAX_GRID);
+  renderPortLayoutGrid();
+}
+
+function plCompact() {
+  const ed = PORT_LAYOUT_EDITOR;
+  const maxRow = ed.positions.reduce((m, p) => Math.max(m, p.row), 0);
+  const maxCol = ed.positions.reduce((m, p) => Math.max(m, p.col), 0);
+  ed.rows = Math.max(maxRow + 1, 1);
+  ed.cols = Math.max(maxCol + 1, 1);
+  renderPortLayoutGrid();
+}
+
+async function savePortLayout() {
+  const ed = PORT_LAYOUT_EDITOR;
+  const positions = [];
+  ed.positions.forEach(pos => pos.ports.forEach(p => positions.push({ port_id: p.id, grid_row: pos.row, grid_col: pos.col })));
+  try {
+    await api(`/api/devices/${ed.deviceId}/port-grid`, { method: "PUT", body: JSON.stringify({ positions }) });
+    if (ed.mode !== "custom") {
+      await api(`/api/devices/${ed.deviceId}/port-layout-mode`, { method: "PUT", body: JSON.stringify({ mode: "custom" }) });
+    }
+    closeModal();
+    showToast("Port layout saved");
+    refreshCurrentDevice();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+async function resetPortLayoutToAuto() {
+  const ed = PORT_LAYOUT_EDITOR;
+  if (!ed || ed.mode !== "custom") return;
+  if (!confirm("Switch this device back to the automatic (Ports per row) layout on the Map tab? "
+    + "Your custom positions stay saved, so you can switch back to a custom layout later.")) return;
+  try {
+    await api(`/api/devices/${ed.deviceId}/port-layout-mode`, { method: "PUT", body: JSON.stringify({ mode: "auto" }) });
+    closeModal();
+    showToast("Switched to automatic layout");
+    refreshCurrentDevice();
+  } catch (e) {
+    showToast(e.message, true);
+  }
 }
 
 // --- Add ports ---
