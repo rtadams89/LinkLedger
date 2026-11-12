@@ -201,7 +201,8 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
   body { background:#fff; padding:0; }
   .wrap { max-width:100%; }
   .topbar, .searchbar, .tabs, .footer, #modalRoot, .toast,
-  .print-hide, button, .icon-btn, .row-actions { display:none !important; }
+  .print-hide, button, .icon-btn, .row-actions,
+  .map-toolbar, #mapPopover { display:none !important; }
   .print-meta { display:block; margin-bottom:10px; font-size:11px; color:var(--muted); }
   .card { border:none; box-shadow:none; padding:0; margin-bottom:18px; }
   .device-header { border-bottom:2px solid #0f172a; padding-bottom:8px; }
@@ -209,4 +210,10 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
   table { font-size:12px; }
   th, td { border-bottom-color:#cbd5e1; }
   tr, .path-hop { break-inside:avoid; }
+  /* Map tab: printMap() points #mapSvg's viewBox at the full diagram's
+     bounds (independent of whatever's panned/zoomed on screen) right
+     before window.print() -- let it render at that full size instead of
+     the on-screen fixed-height, clipped canvas. */
+  .map-canvas-wrap { overflow:visible !important; border:none; background:none; }
+  #mapSvg { width:100% !important; height:auto !important; }
 }

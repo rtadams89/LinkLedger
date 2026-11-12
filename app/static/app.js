@@ -774,13 +774,15 @@ let LAST_PATH_RESULT = null;
 
 // ---------------------------------------------------------------------------
 // Map -- a to-scale graphical layout of every device and cable, drawn as
-// plain SVG. Each device's ports wrap into rows the same way the physical
-// device does (see ports_per_row in the Edit device modal), so a patch
-// panel split across two rows of 12 looks like one on the map. A patch
-// panel's front/rear pair renders as a single jack, since that's the same
-// physical point with a cable on each side; everything else gets one jack
-// per port. LAG members and multiple patch-panel runs each keep their own
-// line (offset slightly apart) since they're really separate cables.
+// plain SVG. By default each device's ports wrap into a single row
+// (mapAutoGridLayout); "Edit port layout" on the device page switches a
+// device to a free-form per-port grid instead (mapCustomGridLayout), so
+// e.g. a patch panel split across two rows of 12 can look like one on the
+// map. A patch panel's front/rear pair renders as a single jack either
+// way, since that's the same physical point with a cable on each side;
+// everything else gets one jack per port. LAG members and multiple
+// patch-panel runs each keep their own line (offset slightly apart)
+// since they're really separate cables.
 // ---------------------------------------------------------------------------
 const MAP_JACK = 22;
 const MAP_JACK_R = 5;
@@ -1175,13 +1177,24 @@ function mapRouteHeuristic(a, b) {
 // can still reach a neighboring jack. _Y is generous enough to span the
 // device's whole box top-to-bottom regardless of how many port rows it
 // has, so entry from either edge still reaches it.
+//
+// `exitSign` restricts that vertical slack to one side only: positive
+// exits downward only, negative upward only, 0 (or omitted) keeps the
+// old symmetric behavior. mapRouteCable passes whichever side is
+// actually closer to the OTHER endpoint, so a jack exits toward its own
+// destination instead of a fixed/arbitrary direction -- otherwise two
+// cables that happen to share one physical jack (e.g. a patch panel's
+// front/rear pair, see mapDevicePositions) could both get forced out the
+// same side and overlap for a few cells before they're able to diverge.
 const MAP_ROUTE_EXEMPT_RADIUS_X = 0;
 const MAP_ROUTE_EXEMPT_RADIUS_Y = 6;
-function mapRouteExemptCells(grid, cell, devId) {
+function mapRouteExemptCells(grid, cell, devId, exitSign) {
   const exempt = new Set();
   if (devId == null) return exempt;
   const { cols, rows, owner } = grid;
-  for (let dr = -MAP_ROUTE_EXEMPT_RADIUS_Y; dr <= MAP_ROUTE_EXEMPT_RADIUS_Y; dr++) {
+  const drMin = exitSign > 0 ? 0 : -MAP_ROUTE_EXEMPT_RADIUS_Y;
+  const drMax = exitSign < 0 ? 0 : MAP_ROUTE_EXEMPT_RADIUS_Y;
+  for (let dr = drMin; dr <= drMax; dr++) {
     for (let dc = -MAP_ROUTE_EXEMPT_RADIUS_X; dc <= MAP_ROUTE_EXEMPT_RADIUS_X; dc++) {
       const r = cell.r + dr, c = cell.c + dc;
       if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
@@ -1258,8 +1271,27 @@ function mapRouteAStar(grid, start, end, exempt, win) {
 // common case (nothing in the way) stays fast, while a route that needs a
 // long detour still eventually finds one.
 function mapRouteCable(grid, aCell, bCell, aDevId, bDevId) {
-  const exemptA = mapRouteExemptCells(grid, aCell, aDevId);
-  const exemptB = mapRouteExemptCells(grid, bCell, bDevId);
+  // Exit toward whichever side is actually closer to the other endpoint
+  // (see mapRouteExemptCells) -- 0 (same row, or exactly unclear) falls
+  // back to the old either-direction behavior.
+  const aSign = bCell.r === aCell.r ? 0 : Math.sign(bCell.r - aCell.r);
+  const bSign = aCell.r === bCell.r ? 0 : Math.sign(aCell.r - bCell.r);
+  const path = mapRouteCableTry(grid, aCell, bCell, aDevId, bDevId, aSign, bSign);
+  if (path) return path;
+  // The directional bias above can occasionally box a route in
+  // entirely -- e.g. the only actual way out is the "wrong" side (a
+  // device backed up against the edge of everything else on the map) --
+  // in which case fall back to the old symmetric (either-direction)
+  // exemption rather than ever leaving a cable unrouted (which would
+  // fall all the way back to a raw straight line cutting across the
+  // whole diagram -- see the "boxed in somehow" fallback below).
+  if (aSign !== 0 || bSign !== 0) return mapRouteCableTry(grid, aCell, bCell, aDevId, bDevId, 0, 0);
+  return null;
+}
+
+function mapRouteCableTry(grid, aCell, bCell, aDevId, bDevId, aSign, bSign) {
+  const exemptA = mapRouteExemptCells(grid, aCell, aDevId, aSign);
+  const exemptB = mapRouteExemptCells(grid, bCell, bDevId, bSign);
   const exempt = exemptA.size && exemptB.size ? new Set([...exemptA, ...exemptB]) : (exemptA.size ? exemptA : exemptB);
   const marginsPx = [150, 400, Infinity];
   for (const marginPx of marginsPx) {
@@ -1603,6 +1635,41 @@ function mapResetView() {
   mapApplyViewport();
 }
 
+// Printing the Map tab needs the WHOLE diagram, not just whatever's
+// currently panned/zoomed into the on-screen viewport (which is clipped
+// to a fixed-height box on screen -- see .map-canvas-wrap). Rather than
+// fiddle with MAP_VIEW (which drives interactive panning/zooming), this
+// temporarily points the <svg> itself at the full content bounds via
+// viewBox, independent of MAP_VIEW, so the browser's print layout scales
+// the whole thing to fit the page (preserving aspect ratio) instead of
+// printing a cropped screenshot of the current pan position. See
+// .map-canvas-wrap / #mapSvg under @media print in style.css for the
+// companion CSS that lets it actually render at full size on the page.
+function printMap() {
+  const svg = document.getElementById("mapSvg");
+  if (!svg) { window.print(); return; }
+  const devices = mapFilteredDevices();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  devices.forEach(d => {
+    const o = MAP_NODE_ORIGIN[d.id], b = MAP_NODE_BOX[d.id];
+    if (!o || !b) return;
+    minX = Math.min(minX, o.x); minY = Math.min(minY, o.y);
+    maxX = Math.max(maxX, o.x + b.width); maxY = Math.max(maxY, o.y + b.height);
+  });
+  if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 100; maxY = 100; }
+  const pad = 20;
+  svg.setAttribute("viewBox", `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`);
+  window.print();
+}
+// Printing itself (window.print()) is what actually applies @media
+// print, so the viewBox override above only needs to be gone by the time
+// the dialog closes -- afterprint fires then, whether the user printed
+// or cancelled.
+window.addEventListener("afterprint", () => {
+  const svg = document.getElementById("mapSvg");
+  if (svg && svg.hasAttribute("viewBox")) svg.removeAttribute("viewBox");
+});
+
 function mapUpdateEdgesForDevice(devId) {
   const svg = document.getElementById("mapSvg");
   svg.querySelectorAll(".map-edge").forEach(g => {
@@ -1866,9 +1933,11 @@ function mapShellHTML() {
         <button class="btn small" onclick="mapZoom(0.8)" title="Zoom out">&minus;</button>
         <button class="btn small" onclick="mapResetView()">Reset view</button>
       </div>
+      <button class="btn small" onclick="printMap()">Print map</button>
       <span class="note" id="map_highlightNote" style="display:none;">Showing a path &middot; <a class="link" onclick="clearMapHighlight()">Clear</a></span>
       ${isAdmin() ? `<span class="note">Drag a device to place it -- positions save automatically.</span>` : ""}
     </div>
+    <div class="print-meta">LinkLedger &mdash; printed ${esc(new Date().toLocaleString())}</div>
     <div class="map-canvas-wrap" id="mapCanvasWrap">
       <svg id="mapSvg" width="100%" height="640"></svg>
       <div class="map-popover" id="mapPopover" style="display:none;"></div>
@@ -1921,7 +1990,7 @@ function renderModal(html, extraClass) {
 // --- Add/edit device ---
 async function openDeviceModal(deviceId) {
   const [d, roleSettings, sites] = await Promise.all([
-    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false, ports_per_row: null, show_on_map: true }),
+    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false, show_on_map: true }),
     api("/api/settings/roles"),
     api("/api/sites"),
   ]);
@@ -1958,11 +2027,10 @@ async function openDeviceModal(deviceId) {
       <label><input type="checkbox" id="f_showOnMap" ${d.show_on_map ? "checked" : ""}> Show on map</label>
       <span class="note">Off by default for Client, Appliance, and Server devices, to keep the Map tab from getting crowded.</span>
     </div>` : ""}
-    ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.${d.port_layout_mode === "custom" ? " Ignored while this device uses a custom port layout, below." : ""})</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
     ${deviceId && d.ports && d.ports.length && !VIRTUAL_SWITCH_ROLES.includes(d.role) ? `<div class="field">
       <span class="note">${d.port_layout_mode === "custom"
         ? "This device uses a custom free-form port layout on the Map tab."
-        : "This device's ports are laid out automatically (Ports per row, above) on the Map tab."}
+        : "This device's ports are laid out automatically on the Map tab."}
       <a class="link" onclick="closeModal(); openPortLayoutModal(${deviceId})">Edit port layout</a></span>
     </div>` : ""}
     <div class="modal-actions">
@@ -1982,8 +2050,6 @@ async function submitDevice(deviceId) {
   };
   const somEl = document.getElementById("f_showOnMap");
   if (somEl) body.show_on_map = somEl.checked;
-  const pprEl = document.getElementById("f_portsPerRow");
-  if (pprEl) body.ports_per_row = pprEl.value ? parseInt(pprEl.value, 10) : 0;
   try {
     if (deviceId) {
       await api(`/api/devices/${deviceId}`, { method: "PUT", body: JSON.stringify(body) });
@@ -2146,7 +2212,7 @@ async function savePortLayout() {
 async function resetPortLayoutToAuto() {
   const ed = PORT_LAYOUT_EDITOR;
   if (!ed || ed.mode !== "custom") return;
-  if (!confirm("Switch this device back to the automatic (Ports per row) layout on the Map tab? "
+  if (!confirm("Switch this device back to the automatic layout on the Map tab? "
     + "Your custom positions stay saved, so you can switch back to a custom layout later.")) return;
   try {
     await api(`/api/devices/${ed.deviceId}/port-layout-mode`, { method: "PUT", body: JSON.stringify({ mode: "auto" }) });
