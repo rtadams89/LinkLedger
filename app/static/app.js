@@ -845,16 +845,60 @@ function mapNodeBox(dev) {
 
 // Grid fallback, grouped by site, for any device with no saved position
 // yet -- just a starting point until it's dragged into its real spot.
+// Walks each candidate grid slot forward until it finds one that doesn't
+// overlap a box that's already spoken for -- either a device the user
+// has deliberately dragged somewhere (pos_x/pos_y set), or an
+// already-auto-placed device from earlier in this same pass. Without
+// this, a plain sequential grid can land a brand-new, never-positioned
+// device's box directly on top of one the user placed on purpose
+// (coincidence, but a near-guarantee in a big imported dataset where
+// most devices haven't been dragged into place yet); the router then
+// can't find any path in or out of whichever device lost the ownership
+// tie for the shared cells, and the cable for it falls back to a raw
+// straight line that cuts through the whole diagram ignoring every
+// other box in its way.
 function mapAutoPlace(devices) {
+  const PAD = 24;
+  const boxOf = {};
+  devices.forEach(d => { boxOf[d.id] = mapNodeBox(d); });
+
+  const occupied = [];
+  const overlapsOccupied = (cx, cy, width, height) => {
+    const x0 = cx - width / 2 - PAD, y0 = cy - height / 2 - PAD;
+    const x1 = cx + width / 2 + PAD, y1 = cy + height / 2 + PAD;
+    return occupied.some(o => !(x1 <= o.x0 || o.x1 <= x0 || y1 <= o.y0 || o.y1 <= y0));
+  };
+  const occupy = (cx, cy, width, height) => {
+    occupied.push({ x0: cx - width / 2 - PAD, y0: cy - height / 2 - PAD, x1: cx + width / 2 + PAD, y1: cy + height / 2 + PAD });
+  };
+
+  devices.forEach(d => {
+    if (d.pos_x != null && d.pos_y != null) {
+      const { width, height } = boxOf[d.id];
+      occupy(d.pos_x, d.pos_y, width, height);
+    }
+  });
+
   const bySite = {};
-  devices.forEach(d => { (bySite[d.site || "(no site)"] ||= []).push(d); });
+  devices.forEach(d => {
+    if (d.pos_x == null || d.pos_y == null) (bySite[d.site || "(no site)"] ||= []).push(d);
+  });
   const placed = {};
   let siteRow = 0;
   Object.keys(bySite).sort().forEach(site => {
     const list = bySite[site].slice().sort((a, b) => a.name.localeCompare(b.name));
     const perRow = 6;
-    list.forEach((d, i) => {
-      placed[d.id] = { x: 140 + (i % perRow) * 220, y: siteRow * 260 + 90 + Math.floor(i / perRow) * 170 };
+    let slot = 0;
+    list.forEach(d => {
+      const { width, height } = boxOf[d.id];
+      let cx, cy, guard = 0;
+      do {
+        cx = 140 + (slot % perRow) * 220;
+        cy = siteRow * 260 + 90 + Math.floor(slot / perRow) * 170;
+        slot++;
+      } while (overlapsOccupied(cx, cy, width, height) && ++guard < 10000);
+      placed[d.id] = { x: cx, y: cy };
+      occupy(cx, cy, width, height);
     });
     siteRow++;
   });
@@ -1053,19 +1097,43 @@ function mapRouteHeuristic(a, b) {
   return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); // octile distance
 }
 
-// 8-directional A* from `start` to `end` (grid cells), treating cells
-// owned by aDevId/bDevId as passable (so a route can leave/approach its
-// own endpoints) and clipped to `win` (a local search window) for speed;
-// the caller retries with a wider window if this returns null.
-function mapRouteAStar(grid, start, end, aDevId, bDevId, win) {
-  const { cols, rows, blocked, owner, usage } = grid;
+// Only exempt a small neighborhood around one endpoint's own jack (not
+// that device's whole footprint) from blocking -- just enough for a
+// route to step out of the device to reach that specific jack cleanly,
+// without turning the rest of a big multi-port box (e.g. a 24-port
+// patch panel) into a shortcut other cables can cut through on their way
+// to a different jack, which used to produce a tangle of crossing lines
+// inside the box instead of each cable approaching its own port directly.
+const MAP_ROUTE_EXEMPT_RADIUS = 4;
+function mapRouteExemptCells(grid, cell, devId) {
+  const exempt = new Set();
+  if (devId == null) return exempt;
+  const { cols, rows, owner } = grid;
+  for (let dr = -MAP_ROUTE_EXEMPT_RADIUS; dr <= MAP_ROUTE_EXEMPT_RADIUS; dr++) {
+    for (let dc = -MAP_ROUTE_EXEMPT_RADIUS; dc <= MAP_ROUTE_EXEMPT_RADIUS; dc++) {
+      const r = cell.r + dr, c = cell.c + dc;
+      if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+      const idx = r * cols + c;
+      if (owner[idx] === devId) exempt.add(idx);
+    }
+  }
+  return exempt;
+}
+
+// 8-directional A* from `start` to `end` (grid cells), treating cells in
+// `exempt` as passable (so a route can leave/approach its own jack even
+// though it sits inside a blocked device box) and clipped to `win` (a
+// local search window) for speed; the caller retries with a wider
+// window if this returns null.
+function mapRouteAStar(grid, start, end, exempt, win) {
+  const { cols, rows, blocked, usage } = grid;
   const startIdx = start.r * cols + start.c, endIdx = end.r * cols + end.c;
   const gScore = new Map([[startIdx, 0]]);
   const cameFrom = new Map(), cameDir = new Map();
   const closed = new Set();
   const open = new MapMinHeap();
   open.push(startIdx, mapRouteHeuristic(start, end));
-  const isOwned = (idx) => owner[idx] === aDevId || owner[idx] === bDevId;
+  const isOwned = (idx) => exempt.has(idx);
   let guard = 0;
   while (open.size) {
     if (++guard > 60000) break; // safety valve on pathological grids
@@ -1118,6 +1186,9 @@ function mapRouteAStar(grid, start, end, aDevId, bDevId, win) {
 // common case (nothing in the way) stays fast, while a route that needs a
 // long detour still eventually finds one.
 function mapRouteCable(grid, aCell, bCell, aDevId, bDevId) {
+  const exemptA = mapRouteExemptCells(grid, aCell, aDevId);
+  const exemptB = mapRouteExemptCells(grid, bCell, bDevId);
+  const exempt = exemptA.size && exemptB.size ? new Set([...exemptA, ...exemptB]) : (exemptA.size ? exemptA : exemptB);
   const marginsPx = [150, 400, Infinity];
   for (const marginPx of marginsPx) {
     const m = marginPx === Infinity ? Math.max(grid.rows, grid.cols) : Math.ceil(marginPx / MAP_ROUTE_CELL);
@@ -1127,7 +1198,7 @@ function mapRouteCable(grid, aCell, bCell, aDevId, bDevId) {
       cMin: Math.max(0, Math.min(aCell.c, bCell.c) - m),
       cMax: Math.min(grid.cols - 1, Math.max(aCell.c, bCell.c) + m),
     };
-    const path = mapRouteAStar(grid, aCell, bCell, aDevId, bDevId, win);
+    const path = mapRouteAStar(grid, aCell, bCell, exempt, win);
     if (path) return path;
   }
   return null;
@@ -1180,19 +1251,65 @@ function mapPolylinePath(points) {
   return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 }
 
-// Each cable is a group with a fat invisible "hit" path (SVG hit-testing
-// only covers what's actually painted, and a 1.6px line is hard to click)
-// plus the thin path that's actually seen. data-a-port/data-b-port stay
-// on the group purely so a live drag can swap in a cheap straight-line
-// preview (see mapUpdateEdgesForDevice) before the real route is
-// recomputed on drop.
+function mapPointInBox(p, origin, box) {
+  return p.x >= origin.x && p.x <= origin.x + box.width && p.y >= origin.y && p.y <= origin.y + box.height;
+}
+
+// Cable edges are now drawn ON TOP of device boxes (so a cable stays
+// visible as it runs into its own endpoint's box to reach an interior
+// port -- see drawMap's layering comment). That means a single fat,
+// generously-clickable hit path for the *whole* cable would also sit on
+// top of the open interior of whichever device box the lead-in/lead-out
+// happens to cross, stealing clicks meant for the device itself. Splits
+// the polyline into the small "inside a device's own box" end stretches
+// (walked from each end while points stay inside that device's box) and
+// the "open canvas" middle stretch, so only the middle gets the generous
+// 12px hit width -- the two end stretches get a slimmer one, just enough
+// to click the cable deliberately without blanketing the box.
+function mapHitSplit(points, aBox, bBox) {
+  const n = points.length;
+  let i = 0;
+  if (aBox) {
+    while (i < n - 1 && mapPointInBox(points[i], aBox.origin, aBox.box)) i++;
+  }
+  let j = n - 1;
+  if (bBox) {
+    while (j > 0 && mapPointInBox(points[j], bBox.origin, bBox.box)) j--;
+  }
+  if (i > j) { i = j; } // degenerate (very short route, or overlapping boxes)
+  return {
+    thinA: points.slice(0, i + 1),
+    fatMid: points.slice(i, j + 1),
+    thinB: points.slice(j, n),
+  };
+}
+
+// Each cable is a group with invisible "hit" paths (SVG hit-testing only
+// covers what's actually painted, and a 1.6px line is hard to click)
+// plus the thin path that's actually seen. The hit area is split into a
+// generous 12px-wide stretch over open canvas and slimmer 6px stretches
+// over the bit that dips inside each endpoint device's own box (see
+// mapHitSplit) so it stays easy to click the cable near a port without
+// making it hard to click the device box underneath it elsewhere.
+// data-a-port/data-b-port stay on the group purely so a live drag can
+// swap in a cheap straight-line preview (see mapUpdateEdgesForDevice)
+// before the real route is recomputed on drop.
 function mapCableSVG(c, points, highlighted) {
   if (!points || points.length < 2) return "";
   const d = mapPolylinePath(points);
   const stroke = highlighted ? "#2563eb" : "#94a3b8";
   const width = highlighted ? 3 : 1.6;
+  const aOrigin = MAP_NODE_ORIGIN[c.a_device_id], aBoxDim = MAP_NODE_BOX[c.a_device_id];
+  const bOrigin = MAP_NODE_ORIGIN[c.b_device_id], bBoxDim = MAP_NODE_BOX[c.b_device_id];
+  const aBox = aOrigin && aBoxDim ? { origin: aOrigin, box: aBoxDim } : null;
+  const bBox = bOrigin && bBoxDim ? { origin: bOrigin, box: bBoxDim } : null;
+  const { thinA, fatMid, thinB } = mapHitSplit(points, aBox, bBox);
+  const hitParts = [];
+  if (thinA.length >= 2) hitParts.push(`<path class="map-edge-hit" d="${mapPolylinePath(thinA)}" fill="none" stroke="transparent" stroke-width="6"></path>`);
+  if (fatMid.length >= 2) hitParts.push(`<path class="map-edge-hit" d="${mapPolylinePath(fatMid)}" fill="none" stroke="transparent" stroke-width="12"></path>`);
+  if (thinB.length >= 2) hitParts.push(`<path class="map-edge-hit" d="${mapPolylinePath(thinB)}" fill="none" stroke="transparent" stroke-width="6"></path>`);
   return `<g class="map-edge" data-cable-id="${c.id}" data-a-port="${c.a_port_id}" data-b-port="${c.b_port_id}">
-    <path class="map-edge-hit" d="${d}" fill="none" stroke="transparent" stroke-width="12"></path>
+    ${hitParts.join("")}
     <path class="map-edge-line" d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"></path>
   </g>`;
 }
@@ -1594,7 +1711,7 @@ function mapShellHTML() {
       <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
       <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
       <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
-      <span class="note">Dashed outline = hidden device (off by default, e.g. clients)</span>
+      <span class="note">Dashed outline = hidden device (off by default, e.g. clients/appliances)</span>
     </div>
   </div>`;
 }
@@ -1669,7 +1786,7 @@ async function openDeviceModal(deviceId) {
     </div>
     ${deviceId ? `<div class="field checkbox-field">
       <label><input type="checkbox" id="f_showOnMap" ${d.show_on_map ? "checked" : ""}> Show on map</label>
-      <span class="note">Off by default for Client devices, to keep the Map tab from getting crowded.</span>
+      <span class="note">Off by default for Client and Appliance devices, to keep the Map tab from getting crowded.</span>
     </div>` : ""}
     ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.)</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
     <div class="modal-actions">

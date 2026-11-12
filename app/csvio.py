@@ -278,7 +278,8 @@ def _import_devices(conn, rows):
         # feature) -- fall back to the same role-based default create_device
         # uses, rather than forcing every restored device to visible.
         show_on_map_cell = row.get("show_on_map")
-        show_on_map = _yesno(show_on_map_cell) if show_on_map_cell not in (None, "") else (role != "Client")
+        show_on_map = (_yesno(show_on_map_cell) if show_on_map_cell not in (None, "")
+                       else role not in db.MAP_HIDDEN_BY_DEFAULT_ROLES)
         conn.execute(
             "INSERT INTO devices (name, role, model, site, notes, poe_required, pos_x, pos_y, "
             "ports_per_row, show_on_map) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

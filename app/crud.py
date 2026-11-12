@@ -70,10 +70,11 @@ def create_device(conn, name: str, role: str = "", model: str = "", site: str = 
     if not name:
         raise ConflictError("device name is required")
     role = role.strip()
-    # Clients clutter the Map by default; everything else starts visible.
-    # An explicit True/False always wins over that default.
+    # Certain roles (Client, Appliance -- see db.MAP_HIDDEN_BY_DEFAULT_ROLES)
+    # clutter the Map by default; everything else starts visible. An
+    # explicit True/False always wins over that default.
     if show_on_map is None:
-        show_on_map = role != "Client"
+        show_on_map = role not in db.MAP_HIDDEN_BY_DEFAULT_ROLES
     try:
         cur = conn.execute(
             "INSERT INTO devices (name, role, model, site, notes, poe_required, show_on_map) "

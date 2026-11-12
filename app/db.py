@@ -106,6 +106,12 @@ BRIDGING_ROLES = ["Switch", "Router/Firewall", "AP Group", "Virtual Switch"]
 # ports.virtual_switch_id below.
 VIRTUAL_SWITCH_ROLES = ["AP Group", "Virtual Switch"]
 
+# Roles hidden from the Map tab by default (still toggleable per device,
+# see devices.show_on_map) because there tend to be a lot of them and
+# they clutter the diagram: personal client devices, and small
+# smart-home/IoT appliances.
+MAP_HIDDEN_BY_DEFAULT_ROLES = ["Client", "Appliance"]
+
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -169,6 +175,14 @@ def _migrate(conn):
         # new devices get the same role-based default from crud.create_device.
         conn.execute("ALTER TABLE devices ADD COLUMN show_on_map INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Client'")
+    # Appliance (smart-home/IoT) devices joined the default-hidden set
+    # after the column above already existed for some installs, so this
+    # gets its own one-time backfill (via the meta table) instead of
+    # folding into the show_on_map column-add branch, which only ever
+    # runs once, at column-creation time.
+    if conn.execute("SELECT 1 FROM meta WHERE key = 'map_hide_appliance_backfill'").fetchone() is None:
+        conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Appliance'")
+        conn.execute("INSERT INTO meta (key, value) VALUES ('map_hide_appliance_backfill', '1')")
 
     # Renamed "Workstation" role to "Client".
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")
