@@ -962,8 +962,9 @@ function mapNodeBoxSVG(dev) {
   const fg = ROLE_TEXT[dev.role] || "#334155";
   const hl = MAP_HIGHLIGHT;
   const nodeHL = !!(hl && hl.deviceIds.has(dev.id));
-  // Only drawn at all when "show hidden devices too" is on -- styled as a
-  // dashed/dimmed box so it still reads as "normally hidden".
+  // A normally-hidden device only ever reaches this function when it's
+  // pulled onto the map by a highlighted path (see mapFilteredDevices) --
+  // styled as a dashed/dimmed box so it still reads as "normally hidden".
   const isHidden = !dev.show_on_map;
   const draggable = isAdmin() ? " map-node-draggable" : "";
   return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
@@ -1400,8 +1401,6 @@ function mapVLinkSVG(vl, points, highlighted) {
 function mapFilteredDevices() {
   const sel = document.getElementById("map_siteFilter");
   const site = sel ? sel.value : "";
-  const showHiddenEl = document.getElementById("map_showHidden");
-  const showHidden = showHiddenEl ? showHiddenEl.checked : false;
   const hl = MAP_HIGHLIGHT;
   // A highlighted path always renders in full, even across a site filter
   // or a hidden (e.g. Client) device -- otherwise "Show on map" from the
@@ -1409,7 +1408,7 @@ function mapFilteredDevices() {
   return MAP_DATA.devices.filter(d => {
     if (hl && hl.deviceIds.has(d.id)) return true;
     if (site && d.site !== site) return false;
-    if (!showHidden && !d.show_on_map) return false;
+    if (!d.show_on_map) return false;
     return true;
   });
 }
@@ -1812,9 +1811,6 @@ function mapShellHTML() {
         <option value="">All sites</option>
         ${sites.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}
       </select>
-      <label class="map-toggle-label">
-        <input type="checkbox" id="map_showHidden" onchange="drawMap({fit:'all'})"> Show hidden devices too
-      </label>
       <div class="map-zoom-controls">
         <button class="btn small" onclick="mapZoom(1.25)" title="Zoom in">+</button>
         <button class="btn small" onclick="mapZoom(0.8)" title="Zoom out">&minus;</button>
@@ -1832,7 +1828,7 @@ function mapShellHTML() {
       <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
       <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
       <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
-      <span class="note">Dashed outline = hidden device (off by default, e.g. clients/appliances/servers)</span>
+      <span class="note">Dashed outline = normally-hidden device shown because it's on a highlighted path</span>
     </div>
   </div>`;
 }
