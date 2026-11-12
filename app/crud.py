@@ -65,14 +65,21 @@ def get_device(conn, device_id: int):
 
 
 def create_device(conn, name: str, role: str = "", model: str = "", site: str = "", notes: str = "",
-                   poe_required: bool = False):
+                   poe_required: bool = False, show_on_map=None):
     name = name.strip()
     if not name:
         raise ConflictError("device name is required")
+    role = role.strip()
+    # Clients clutter the Map by default; everything else starts visible.
+    # An explicit True/False always wins over that default.
+    if show_on_map is None:
+        show_on_map = role != "Client"
     try:
         cur = conn.execute(
-            "INSERT INTO devices (name, role, model, site, notes, poe_required) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, role.strip(), model.strip(), site.strip(), notes.strip(), int(bool(poe_required))),
+            "INSERT INTO devices (name, role, model, site, notes, poe_required, show_on_map) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, role, model.strip(), site.strip(), notes.strip(), int(bool(poe_required)),
+             int(bool(show_on_map))),
         )
     except sqlite3.IntegrityError:
         raise ConflictError(f"a device named '{name}' already exists")
@@ -88,7 +95,7 @@ def update_device(conn, device_id: int, **fields):
             continue
         if k in text_fields:
             updates[k] = v.strip()
-        elif k == "poe_required":
+        elif k in ("poe_required", "show_on_map"):
             updates[k] = int(bool(v))
         elif k == "ports_per_row":
             # 0 clears it back to a single row (NULL); the map layout wrap

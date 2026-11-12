@@ -906,6 +906,9 @@ function mapNodeSVG(dev) {
   const fg = ROLE_TEXT[dev.role] || "#334155";
   const hl = MAP_HIGHLIGHT;
   const nodeHL = !!(hl && hl.deviceIds.has(dev.id));
+  // Only drawn at all when "show hidden devices too" is on -- styled as a
+  // dashed/dimmed box so it still reads as "normally hidden".
+  const isHidden = !dev.show_on_map;
   const jacks = box.positions.map(pos => {
     const status = mapPositionStatus(pos, MAP_CABLED_PORTS);
     const fill = status === "full" ? "#22c55e" : status === "partial" ? "#f59e0b" : "#cbd5e1";
@@ -914,45 +917,271 @@ function mapNodeSVG(dev) {
     return `<circle class="map-jack${isHL ? " map-jack-hl" : ""}" data-dev="${dev.id}" data-ports="${ids}" cx="${pos.x}" cy="${pos.y}" r="${MAP_JACK_R}" fill="${fill}" stroke="${isHL ? "#2563eb" : "#fff"}" stroke-width="${isHL ? 2.5 : 1}"><title>${esc(pos.ports.map(p => p.name).join(" / "))}</title></circle>`;
   }).join("");
   const draggable = isAdmin() ? " map-node-draggable" : "";
-  return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
-    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}"></rect>
-    <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}</text>
+  return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
+    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}" stroke-dasharray="${isHidden ? "4 2" : "none"}"></rect>
+    <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}${isHidden ? " (hidden)" : ""}</text>
     ${jacks}
   </g>`;
 }
 
-// Cables sharing the same two devices (LAG members, more than one
-// patch-panel run between the same pair) get a perpendicular offset so
-// each one stays visible as its own line instead of overlapping.
-function mapEdgeOffsets(cables) {
-  const groups = {};
-  cables.forEach(c => {
-    const key = [c.a_device_id, c.b_device_id].sort((x, y) => x - y).join(":");
-    (groups[key] ||= []).push(c);
-  });
-  const offsets = {};
-  Object.values(groups).forEach(list => {
-    const n = list.length;
-    list.forEach((c, i) => { offsets[c.id] = (i - (n - 1) / 2) * 6; });
-  });
-  return offsets;
+// ---------------------------------------------------------------------------
+// Cable routing -- orthogonal (45/90-degree-turn only) paths between the
+// two exact jacks, instead of a straight line cutting through whatever's
+// in between. This is an 8-directional A* over a coarse grid: every
+// device's box (plus a little clearance) is an obstacle, a cable's own
+// two endpoint devices are exempt from blocking its own route (so it can
+// actually leave/reach its jack), and a shared "congestion" counter nudges
+// later cables a lane or two away from corridors earlier ones already
+// used, so parallel runs spread out instead of stacking on top of each
+// other -- including LAG members and multiple patch-panel runs between
+// the same pair of devices, which used to get a fixed perpendicular
+// offset; the router now handles that spacing the same way it does for
+// any other pair of nearby cables.
+// ---------------------------------------------------------------------------
+const MAP_ROUTE_CELL = 14;
+const MAP_ROUTE_TURN_PENALTY = 0.75;
+const MAP_ROUTE_CONGESTION_WEIGHT = 0.9;
+const MAP_ROUTE_DIRS = [
+  [0, 1, 1], [0, -1, 1], [1, 0, 1], [-1, 0, 1],
+  [1, 1, Math.SQRT2], [-1, -1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2],
+];
+
+class MapMinHeap {
+  constructor() { this.a = []; }
+  push(idx, pri) {
+    const a = this.a; a.push([pri, idx]);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p][0] <= a[i][0]) break;
+      [a[p], a[i]] = [a[i], a[p]]; i = p;
+    }
+  }
+  pop() {
+    const a = this.a;
+    if (!a.length) return undefined;
+    const top = a[0], last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (; ;) {
+        const l = i * 2 + 1, r = i * 2 + 2;
+        let s = i;
+        if (l < a.length && a[l][0] < a[s][0]) s = l;
+        if (r < a.length && a[r][0] < a[s][0]) s = r;
+        if (s === i) break;
+        [a[s], a[i]] = [a[i], a[s]]; i = s;
+      }
+    }
+    return top[1];
+  }
+  get size() { return this.a.length; }
 }
 
-// Each cable is a group with a fat invisible "hit" line (SVG hit-testing
+// Builds the shared obstacle/usage grid for one full map draw. `owner`
+// records which device each blocked cell belongs to, so a cable routing
+// from/to that device can still step through its own footprint.
+function mapBuildRouteGrid(devices) {
+  const bounds = mapBoundsFor(devices.map(d => d.id)) || { minX: 0, minY: 0, maxX: 800, maxY: 600 };
+  const margin = 100;
+  const originX = Math.floor((bounds.minX - margin) / MAP_ROUTE_CELL) * MAP_ROUTE_CELL;
+  const originY = Math.floor((bounds.minY - margin) / MAP_ROUTE_CELL) * MAP_ROUTE_CELL;
+  const endX = Math.ceil((bounds.maxX + margin) / MAP_ROUTE_CELL) * MAP_ROUTE_CELL;
+  const endY = Math.ceil((bounds.maxY + margin) / MAP_ROUTE_CELL) * MAP_ROUTE_CELL;
+  const cols = Math.max(1, Math.round((endX - originX) / MAP_ROUTE_CELL));
+  const rows = Math.max(1, Math.round((endY - originY) / MAP_ROUTE_CELL));
+  const blocked = new Uint8Array(cols * rows);
+  const owner = new Int32Array(cols * rows).fill(-1);
+  const clearance = 5;
+  devices.forEach(dev => {
+    const o = MAP_NODE_ORIGIN[dev.id], box = MAP_NODE_BOX[dev.id];
+    if (!o || !box) return;
+    const c0 = Math.max(0, Math.floor((o.x - clearance - originX) / MAP_ROUTE_CELL));
+    const c1 = Math.min(cols, Math.ceil((o.x + box.width + clearance - originX) / MAP_ROUTE_CELL));
+    const r0 = Math.max(0, Math.floor((o.y - clearance - originY) / MAP_ROUTE_CELL));
+    const r1 = Math.min(rows, Math.ceil((o.y + box.height + clearance - originY) / MAP_ROUTE_CELL));
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        blocked[r * cols + c] = 1;
+        owner[r * cols + c] = dev.id;
+      }
+    }
+  });
+  return {
+    originX, originY, cols, rows, blocked, owner,
+    usage: {
+      H: new Uint16Array(cols * rows), V: new Uint16Array(cols * rows),
+      D1: new Uint16Array(cols * rows), D2: new Uint16Array(cols * rows),
+    },
+  };
+}
+
+function mapRouteCellOf(grid, x, y) {
+  const c = Math.round((x - grid.originX) / MAP_ROUTE_CELL);
+  const r = Math.round((y - grid.originY) / MAP_ROUTE_CELL);
+  return { r: Math.min(Math.max(r, 0), grid.rows - 1), c: Math.min(Math.max(c, 0), grid.cols - 1) };
+}
+function mapRouteCellXY(grid, r, c) {
+  return { x: grid.originX + c * MAP_ROUTE_CELL, y: grid.originY + r * MAP_ROUTE_CELL };
+}
+
+// A stable per-undirected-edge key (same result regardless of which
+// direction it's traversed), used both to read and to bump congestion.
+function mapRouteEdgeKey(r, c, nr, nc, cols) {
+  if (nr === r) { const cc = Math.min(c, nc); return { arr: "H", idx: r * cols + cc }; }
+  if (nc === c) { const rr = Math.min(r, nr); return { arr: "V", idx: rr * cols + c }; }
+  if ((nr - r) === (nc - c)) { const rr = Math.min(r, nr), cc = Math.min(c, nc); return { arr: "D1", idx: rr * cols + cc }; }
+  const rr = Math.min(r, nr);
+  const cc = (rr === r) ? c : nc;
+  return { arr: "D2", idx: rr * cols + cc };
+}
+
+function mapRouteHeuristic(a, b) {
+  const dx = Math.abs(a.c - b.c), dy = Math.abs(a.r - b.r);
+  return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); // octile distance
+}
+
+// 8-directional A* from `start` to `end` (grid cells), treating cells
+// owned by aDevId/bDevId as passable (so a route can leave/approach its
+// own endpoints) and clipped to `win` (a local search window) for speed;
+// the caller retries with a wider window if this returns null.
+function mapRouteAStar(grid, start, end, aDevId, bDevId, win) {
+  const { cols, rows, blocked, owner, usage } = grid;
+  const startIdx = start.r * cols + start.c, endIdx = end.r * cols + end.c;
+  const gScore = new Map([[startIdx, 0]]);
+  const cameFrom = new Map(), cameDir = new Map();
+  const closed = new Set();
+  const open = new MapMinHeap();
+  open.push(startIdx, mapRouteHeuristic(start, end));
+  const isOwned = (idx) => owner[idx] === aDevId || owner[idx] === bDevId;
+  let guard = 0;
+  while (open.size) {
+    if (++guard > 60000) break; // safety valve on pathological grids
+    const cur = open.pop();
+    if (cur === endIdx) break;
+    if (closed.has(cur)) continue;
+    closed.add(cur);
+    const r = Math.floor(cur / cols), c = cur % cols;
+    for (let di = 0; di < MAP_ROUTE_DIRS.length; di++) {
+      const [dr, dc, baseCost] = MAP_ROUTE_DIRS[di];
+      const nr = r + dr, nc = c + dc;
+      if (nr < win.rMin || nr > win.rMax || nc < win.cMin || nc > win.cMax) continue;
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+      const nIdx = nr * cols + nc;
+      if (closed.has(nIdx)) continue;
+      if (blocked[nIdx] && !isOwned(nIdx) && nIdx !== endIdx) continue;
+      if (dr !== 0 && dc !== 0) {
+        // Don't let a diagonal step cut through the corner of two
+        // orthogonally-blocked cells.
+        const s1 = r * cols + nc, s2 = nr * cols + c;
+        const b1 = blocked[s1] && !isOwned(s1), b2 = blocked[s2] && !isOwned(s2);
+        if (b1 && b2) continue;
+      }
+      const ek = mapRouteEdgeKey(r, c, nr, nc, cols);
+      const congestion = usage[ek.arr][ek.idx] || 0;
+      const turnPenalty = (cameDir.has(cur) && cameDir.get(cur) !== di) ? MAP_ROUTE_TURN_PENALTY : 0;
+      const stepCost = baseCost + congestion * MAP_ROUTE_CONGESTION_WEIGHT + turnPenalty;
+      const tentative = gScore.get(cur) + stepCost;
+      if (tentative < (gScore.has(nIdx) ? gScore.get(nIdx) : Infinity)) {
+        gScore.set(nIdx, tentative);
+        cameFrom.set(nIdx, cur);
+        cameDir.set(nIdx, di);
+        open.push(nIdx, tentative + mapRouteHeuristic({ r: nr, c: nc }, end));
+      }
+    }
+  }
+  if (!gScore.has(endIdx)) return null;
+  const path = [];
+  let cur = endIdx;
+  while (cur !== undefined) {
+    path.push({ r: Math.floor(cur / cols), c: cur % cols });
+    if (cur === startIdx) break;
+    cur = cameFrom.get(cur);
+  }
+  path.reverse();
+  return path;
+}
+
+// Progressively widens the search window around the two endpoints so the
+// common case (nothing in the way) stays fast, while a route that needs a
+// long detour still eventually finds one.
+function mapRouteCable(grid, aCell, bCell, aDevId, bDevId) {
+  const marginsPx = [150, 400, Infinity];
+  for (const marginPx of marginsPx) {
+    const m = marginPx === Infinity ? Math.max(grid.rows, grid.cols) : Math.ceil(marginPx / MAP_ROUTE_CELL);
+    const win = {
+      rMin: Math.max(0, Math.min(aCell.r, bCell.r) - m),
+      rMax: Math.min(grid.rows - 1, Math.max(aCell.r, bCell.r) + m),
+      cMin: Math.max(0, Math.min(aCell.c, bCell.c) - m),
+      cMax: Math.min(grid.cols - 1, Math.max(aCell.c, bCell.c) + m),
+    };
+    const path = mapRouteAStar(grid, aCell, bCell, aDevId, bDevId, win);
+    if (path) return path;
+  }
+  return null;
+}
+
+function mapRouteMarkUsage(grid, cellPath) {
+  for (let i = 0; i < cellPath.length - 1; i++) {
+    const a = cellPath[i], b = cellPath[i + 1];
+    const ek = mapRouteEdgeKey(a.r, a.c, b.r, b.c, grid.cols);
+    grid.usage[ek.arr][ek.idx] = (grid.usage[ek.arr][ek.idx] || 0) + 1;
+  }
+}
+
+// Collapses collinear runs of points down to just the actual turn
+// points, so a long straight (or diagonal) run renders as one segment
+// instead of dozens of tiny ones.
+function mapSimplifyPolyline(pts) {
+  if (pts.length <= 2) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = out[out.length - 1], cur = pts[i], next = pts[i + 1];
+    const cross = (cur.x - prev.x) * (next.y - cur.y) - (cur.y - prev.y) * (next.x - cur.x);
+    if (Math.abs(cross) > 0.01) out.push(cur);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function mapRouteSimplify(grid, cellPath) {
+  return mapSimplifyPolyline(cellPath.map(({ r, c }) => mapRouteCellXY(grid, r, c)));
+}
+
+// A jack's exact pixel position almost never lands precisely on the
+// routing grid, so the short stub connecting it to the nearest grid
+// point is usually some arbitrary little vector -- not a 45-degree
+// multiple. This replaces that one stub with an L-shaped pair of
+// segments (one purely horizontal, one purely vertical) so the whole
+// path, lead-in stub included, only ever turns at 45 or 90 degrees.
+// Returns [a, b] unchanged if the direct line is already aligned.
+function mapRouteOrthogonalize(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (Math.abs(dx) < 0.05 || Math.abs(dy) < 0.05 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 0.05) {
+    return [a, b];
+  }
+  const elbow = Math.abs(dx) >= Math.abs(dy) ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
+  return [a, elbow, b];
+}
+
+function mapPolylinePath(points) {
+  return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+// Each cable is a group with a fat invisible "hit" path (SVG hit-testing
 // only covers what's actually painted, and a 1.6px line is hard to click)
-// plus the thin line that's actually seen.
-function mapCableSVG(c, offset, highlighted) {
-  const a = mapJackAbs(c.a_port_id) || mapAnchorAbs(c.a_device_id);
-  const b = mapJackAbs(c.b_port_id) || mapAnchorAbs(c.b_device_id);
-  if (!a || !b) return "";
-  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
-  const ox = (-dy / len) * offset, oy = (dx / len) * offset;
+// plus the thin path that's actually seen. data-a-port/data-b-port stay
+// on the group purely so a live drag can swap in a cheap straight-line
+// preview (see mapUpdateEdgesForDevice) before the real route is
+// recomputed on drop.
+function mapCableSVG(c, points, highlighted) {
+  if (!points || points.length < 2) return "";
+  const d = mapPolylinePath(points);
   const stroke = highlighted ? "#2563eb" : "#94a3b8";
   const width = highlighted ? 3 : 1.6;
-  const x1 = a.x + ox, y1 = a.y + oy, x2 = b.x + ox, y2 = b.y + oy;
-  return `<g class="map-edge" data-cable-id="${c.id}" data-a-port="${c.a_port_id}" data-b-port="${c.b_port_id}" data-offset="${offset}">
-    <line class="map-edge-hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="12"></line>
-    <line class="map-edge-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round"></line>
+  return `<g class="map-edge" data-cable-id="${c.id}" data-a-port="${c.a_port_id}" data-b-port="${c.b_port_id}">
+    <path class="map-edge-hit" d="${d}" fill="none" stroke="transparent" stroke-width="12"></path>
+    <path class="map-edge-line" d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"></path>
   </g>`;
 }
 
@@ -980,7 +1209,18 @@ function mapVLinkSVG(vl, highlighted) {
 function mapFilteredDevices() {
   const sel = document.getElementById("map_siteFilter");
   const site = sel ? sel.value : "";
-  return site ? MAP_DATA.devices.filter(d => d.site === site) : MAP_DATA.devices;
+  const showHiddenEl = document.getElementById("map_showHidden");
+  const showHidden = showHiddenEl ? showHiddenEl.checked : false;
+  const hl = MAP_HIGHLIGHT;
+  // A highlighted path always renders in full, even across a site filter
+  // or a hidden (e.g. Client) device -- otherwise "Show on map" from the
+  // path finder could silently drop part of the route.
+  return MAP_DATA.devices.filter(d => {
+    if (hl && hl.deviceIds.has(d.id)) return true;
+    if (site && d.site !== site) return false;
+    if (!showHidden && !d.show_on_map) return false;
+    return true;
+  });
 }
 
 // Bounding box (in world/layout coordinates) of a set of device ids,
@@ -1024,16 +1264,43 @@ function drawMap(opts) {
   const devices = mapFilteredDevices();
   mapBuildLayout(devices);
   if (opts.fit === "highlight") mapFitToHighlight();
-  else mapFitToAll(devices);
+  else if (opts.fit === "all") mapFitToAll(devices);
+  // Otherwise (e.g. a redraw right after a drag) keep whatever pan/zoom
+  // the user currently has -- only an explicit fit should move the camera.
   MAP_CABLED_PORTS = mapCabledPortIds(MAP_DATA);
 
   const deviceIds = new Set(devices.map(d => d.id));
-  const cables = MAP_DATA.cables.filter(c => deviceIds.has(c.a_device_id) && deviceIds.has(c.b_device_id));
-  const offsets = mapEdgeOffsets(cables);
+  const cables = MAP_DATA.cables
+    .filter(c => deviceIds.has(c.a_device_id) && deviceIds.has(c.b_device_id))
+    .slice()
+    .sort((x, y) => x.id - y.id); // stable order so routing doesn't jitter between redraws
   const vlinks = mapCollectVLinks(devices);
   const hl = MAP_HIGHLIGHT;
 
-  const edgesHTML = cables.map(c => mapCableSVG(c, offsets[c.id] || 0, !!(hl && hl.cableIds.has(c.id)))).join("");
+  const grid = mapBuildRouteGrid(devices);
+  const edgesHTML = cables.map(c => {
+    const a = mapJackAbs(c.a_port_id) || mapAnchorAbs(c.a_device_id);
+    const b = mapJackAbs(c.b_port_id) || mapAnchorAbs(c.b_device_id);
+    if (!a || !b) return "";
+    const aCell = mapRouteCellOf(grid, a.x, a.y), bCell = mapRouteCellOf(grid, b.x, b.y);
+    const cellPath = mapRouteCable(grid, aCell, bCell, c.a_device_id, c.b_device_id);
+    let points;
+    if (cellPath && cellPath.length) {
+      mapRouteMarkUsage(grid, cellPath);
+      const grid_pts = mapRouteSimplify(grid, cellPath);
+      // Swap the arbitrary stub between the exact jack and the nearest
+      // grid point for an orthogonal lead-in/out, so even that stub
+      // only ever turns at 45/90 degrees (see mapRouteOrthogonalize).
+      const leadIn = mapRouteOrthogonalize(a, grid_pts[0]);
+      leadIn.pop();
+      const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b);
+      leadOut.shift();
+      points = mapSimplifyPolyline([...leadIn, ...grid_pts, ...leadOut]);
+    } else {
+      points = [a, b]; // boxed in somehow -- fall back to a straight line
+    }
+    return mapCableSVG(c, points, !!(hl && hl.cableIds.has(c.id)));
+  }).join("");
   const vlinksHTML = vlinks.map(vl => mapVLinkSVG(vl, !!(hl && hl.jackKeys.has(vl.port_id)))).join("");
   const nodesHTML = devices.map(d => mapNodeSVG(d)).join("");
 
@@ -1074,13 +1341,12 @@ function mapUpdateEdgesForDevice(devId) {
     if (aOwner !== devId && bOwner !== devId) return;
     const a = mapJackAbs(aPort), b = mapJackAbs(bPort);
     if (!a || !b) return;
-    const offset = Number(g.dataset.offset || 0);
-    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
-    const ox = (-dy / len) * offset, oy = (dx / len) * offset;
-    g.querySelectorAll("line").forEach(line => {
-      line.setAttribute("x1", a.x + ox); line.setAttribute("y1", a.y + oy);
-      line.setAttribute("x2", b.x + ox); line.setAttribute("y2", b.y + oy);
-    });
+    // Live-drag preview only: a plain straight line, so moving a node
+    // doesn't re-run the router on every pointer event. drawMap() on
+    // drop (see the pointerup handler) replaces this with the real
+    // orthogonal route.
+    const d = `M${a.x.toFixed(1)},${a.y.toFixed(1)} L${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+    g.querySelectorAll("path").forEach(path => path.setAttribute("d", d));
   });
   svg.querySelectorAll(".map-vlink").forEach(g => {
     const vport = Number(g.dataset.vport), vdev = Number(g.dataset.vdevice);
@@ -1199,6 +1465,11 @@ function mapAttachHandlers(svg) {
   });
 
   svg.addEventListener("pointerup", async (e) => {
+    // Release capture before the click event fires -- otherwise a
+    // captured pointer retargets the click to the <svg> itself instead
+    // of the node/jack/edge actually under the cursor, and a plain
+    // (non-dragging) click on a device silently does nothing.
+    if (svg.hasPointerCapture && svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
     if (MAP_DRAG) {
       const { devId, moved } = MAP_DRAG;
       MAP_DRAG = null;
@@ -1211,6 +1482,7 @@ function mapAttachHandlers(svg) {
             body: JSON.stringify({ x: origin.x + box.width / 2, y: origin.y + box.height / 2 }),
           });
         } catch (err) { showToast(err.message, true); }
+        drawMap(); // swap the straight-line drag preview for the real routed paths, keeping the current view
       }
     }
     MAP_PAN = null;
@@ -1218,13 +1490,20 @@ function mapAttachHandlers(svg) {
 
   svg.addEventListener("click", (e) => {
     if (MAP_SUPPRESS_CLICK) { MAP_SUPPRESS_CLICK = false; return; }
-    const jackEl = e.target.closest(".map-jack");
+    // A node drag calls setPointerCapture on the svg so dragging works
+    // past the node's own edges; browsers retarget the *click* event
+    // itself to the capturing element for the rest of that gesture, so
+    // e.target here can be the <svg> even when the user just clicked a
+    // node/jack/edge without dragging. elementFromPoint does a real,
+    // uncaptured hit-test at the actual cursor position instead.
+    const real = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+    const jackEl = real.closest(".map-jack");
     if (jackEl) { mapShowJackPopover(jackEl, e); return; }
-    const edgeEl = e.target.closest(".map-edge");
+    const edgeEl = real.closest(".map-edge");
     if (edgeEl) { mapShowCablePopover(edgeEl, e); return; }
-    const vlinkEl = e.target.closest(".map-vlink");
+    const vlinkEl = real.closest(".map-vlink");
     if (vlinkEl) { mapShowVLinkPopover(vlinkEl, e); return; }
-    const nodeEl = e.target.closest(".map-node");
+    const nodeEl = real.closest(".map-node");
     if (nodeEl) { viewDevice(Number(nodeEl.dataset.deviceId)); return; }
     document.getElementById("mapPopover").style.display = "none";
   });
@@ -1237,7 +1516,7 @@ function updateMapHighlightNote() {
 
 function clearMapHighlight() {
   MAP_HIGHLIGHT = null;
-  drawMap();
+  drawMap({ fit: "all" });
   updateMapHighlightNote();
 }
 
@@ -1272,10 +1551,13 @@ function mapShellHTML() {
   return `
   <div class="card map-card">
     <div class="map-toolbar">
-      <select id="map_siteFilter" onchange="drawMap()">
+      <select id="map_siteFilter" onchange="drawMap({fit:'all'})">
         <option value="">All sites</option>
         ${sites.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}
       </select>
+      <label class="map-toggle-label">
+        <input type="checkbox" id="map_showHidden" onchange="drawMap({fit:'all'})"> Show hidden devices too
+      </label>
       <div class="map-zoom-controls">
         <button class="btn small" onclick="mapZoom(1.25)" title="Zoom in">+</button>
         <button class="btn small" onclick="mapZoom(0.8)" title="Zoom out">&minus;</button>
@@ -1293,6 +1575,7 @@ function mapShellHTML() {
       <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
       <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
       <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
+      <span class="note">Dashed outline = hidden device (off by default, e.g. clients)</span>
     </div>
   </div>`;
 }
@@ -1332,7 +1615,7 @@ function renderModal(html) { document.getElementById("modalRoot").innerHTML = `<
 // --- Add/edit device ---
 async function openDeviceModal(deviceId) {
   const [d, roleSettings, sites] = await Promise.all([
-    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false, ports_per_row: null }),
+    deviceId ? api(`/api/devices/${deviceId}`) : Promise.resolve({ name: "", role: "", model: "", site: "", notes: "", poe_required: false, ports_per_row: null, show_on_map: true }),
     api("/api/settings/roles"),
     api("/api/sites"),
   ]);
@@ -1365,6 +1648,10 @@ async function openDeviceModal(deviceId) {
     <div class="field checkbox-field">
       <label><input type="checkbox" id="f_poe" ${d.poe_required ? "checked" : ""}> Requires PoE</label>
     </div>
+    ${deviceId ? `<div class="field checkbox-field">
+      <label><input type="checkbox" id="f_showOnMap" ${d.show_on_map ? "checked" : ""}> Show on map</label>
+      <span class="note">Off by default for Client devices, to keep the Map tab from getting crowded.</span>
+    </div>` : ""}
     ${deviceId ? `<div class="field"><label>Ports per row <span class="note">(Map layout -- how this device's ports wrap into rows; a patch panel counts each front/rear pair as one. Blank = single row.)</span></label><input type="number" min="1" id="f_portsPerRow" value="${d.ports_per_row || ""}"></div>` : ""}
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
@@ -1381,6 +1668,8 @@ async function submitDevice(deviceId) {
     notes: document.getElementById("f_notes").value,
     poe_required: document.getElementById("f_poe").checked,
   };
+  const somEl = document.getElementById("f_showOnMap");
+  if (somEl) body.show_on_map = somEl.checked;
   const pprEl = document.getElementById("f_portsPerRow");
   if (pprEl) body.ports_per_row = pprEl.value ? parseInt(pprEl.value, 10) : 0;
   try {

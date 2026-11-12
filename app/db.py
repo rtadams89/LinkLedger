@@ -163,6 +163,12 @@ def _migrate(conn):
     if "ports_per_row" not in device_cols:
         # NULL means all ports/positions in a single row.
         conn.execute("ALTER TABLE devices ADD COLUMN ports_per_row INTEGER")
+    if "show_on_map" not in device_cols:
+        # Whether this device is drawn on the Map tab. Defaults to visible,
+        # except we immediately hide any existing Client devices below --
+        # new devices get the same role-based default from crud.create_device.
+        conn.execute("ALTER TABLE devices ADD COLUMN show_on_map INTEGER NOT NULL DEFAULT 1")
+        conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Client'")
 
     # Renamed "Workstation" role to "Client".
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")

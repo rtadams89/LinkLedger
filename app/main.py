@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,9 @@ class DeviceIn(BaseModel):
     site: str = ""
     notes: str = ""
     poe_required: bool = False
+    # None means "pick the default from role" (crud.create_device hides
+    # Clients by default); an explicit value always wins.
+    show_on_map: Optional[bool] = None
 
 
 class DeviceUpdate(BaseModel):
@@ -123,6 +126,7 @@ class DeviceUpdate(BaseModel):
     notes: Optional[str] = None
     poe_required: Optional[bool] = None
     ports_per_row: Optional[int] = None
+    show_on_map: Optional[bool] = None
 
 
 class PositionIn(BaseModel):
@@ -223,7 +227,8 @@ def api_list_devices(q: Optional[str] = None):
 
 @app.post("/api/devices", dependencies=[Depends(require_admin)])
 def api_create_device(body: DeviceIn):
-    return handle(crud.create_device, body.name, body.role, body.model, body.site, body.notes, body.poe_required)
+    return handle(crud.create_device, body.name, body.role, body.model, body.site, body.notes, body.poe_required,
+                  body.show_on_map)
 
 
 @app.get("/api/devices/{device_id}")

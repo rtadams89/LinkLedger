@@ -22,7 +22,13 @@ from datetime import datetime, timezone
 
 from . import crud, db
 
-DEVICE_COLUMNS = ["name", "role", "model", "site", "notes", "poe_required"]
+# The original 6 columns are what a devices CSV is *detected* by (see
+# _SCHEMAS below), so older exports/backups without the Map columns still
+# import fine. The 4 Map columns are written on export and read on import
+# when present, but default sensibly (see _import_devices) when absent.
+DEVICE_CORE_COLUMNS = ["name", "role", "model", "site", "notes", "poe_required"]
+DEVICE_MAP_COLUMNS = ["pos_x", "pos_y", "ports_per_row", "show_on_map"]
+DEVICE_COLUMNS = DEVICE_CORE_COLUMNS + DEVICE_MAP_COLUMNS
 PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with",
                 "wireless_link", "uplink_for", "lag"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
@@ -33,7 +39,7 @@ REPORT_COLUMNS = ["report"]  # one row per currently-enabled report
 
 # Used to auto-detect which type an uploaded CSV is, from its header row.
 _SCHEMAS = {
-    "devices": set(DEVICE_COLUMNS),
+    "devices": set(DEVICE_CORE_COLUMNS),
     "ports": {"device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with"},
     "cables": set(CABLE_COLUMNS),
     "sites": set(SITE_COLUMNS),
@@ -45,6 +51,22 @@ _SCHEMAS = {
 
 def _yesno(v) -> bool:
     return str(v or "").strip().lower() in ("yes", "y", "true", "1")
+
+
+def _float_cell(v):
+    v = (v or "").strip()
+    try:
+        return float(v) if v else None
+    except ValueError:
+        return None
+
+
+def _int_cell(v):
+    v = (v or "").strip()
+    try:
+        return int(v) if v else None
+    except ValueError:
+        return None
 
 
 def _bool_cell(v) -> str:
@@ -78,7 +100,13 @@ def _export_devices(conn) -> bytes:
     w = csv.writer(out)
     w.writerow(DEVICE_COLUMNS)
     for d in crud.list_devices(conn):
-        w.writerow([d["name"], d["role"], d["model"], d["site"], d["notes"], _bool_cell(d["poe_required"])])
+        w.writerow([
+            d["name"], d["role"], d["model"], d["site"], d["notes"], _bool_cell(d["poe_required"]),
+            "" if d["pos_x"] is None else d["pos_x"],
+            "" if d["pos_y"] is None else d["pos_y"],
+            "" if d["ports_per_row"] is None else d["ports_per_row"],
+            _bool_cell(d["show_on_map"]),
+        ])
     return out.getvalue().encode("utf-8")
 
 
@@ -245,11 +273,20 @@ def _import_devices(conn, rows):
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
     for row in rows:
+        role = (row.get("role") or "").strip()
+        # show_on_map may be absent entirely (an export from before the Map
+        # feature) -- fall back to the same role-based default create_device
+        # uses, rather than forcing every restored device to visible.
+        show_on_map_cell = row.get("show_on_map")
+        show_on_map = _yesno(show_on_map_cell) if show_on_map_cell not in (None, "") else (role != "Client")
         conn.execute(
-            "INSERT INTO devices (name, role, model, site, notes, poe_required) VALUES (?, ?, ?, ?, ?, ?)",
-            (row["name"].strip(), (row.get("role") or "").strip(), (row.get("model") or "").strip(),
+            "INSERT INTO devices (name, role, model, site, notes, poe_required, pos_x, pos_y, "
+            "ports_per_row, show_on_map) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (row["name"].strip(), role, (row.get("model") or "").strip(),
              (row.get("site") or "").strip(), (row.get("notes") or "").strip(),
-             int(_yesno(row.get("poe_required")))),
+             int(_yesno(row.get("poe_required"))),
+             _float_cell(row.get("pos_x")), _float_cell(row.get("pos_y")),
+             _int_cell(row.get("ports_per_row")), int(show_on_map)),
         )
 
 
