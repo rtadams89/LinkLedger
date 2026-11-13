@@ -1249,26 +1249,34 @@ def sync_pfsense_instance(conn, instance_id: int):
                 " first_seen, last_seen, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
                 (mac, instance_id, item["interface"], item["dns_name"], item["ip"], now, now),
             )
-    status = "ok"
-    if not seen:
-        # Zero matches is the normal "nothing new" case once this has been
-        # running a while, but the first sync after picking interfaces is
-        # also where a selected-vs-actual interface-identifier mismatch
-        # shows up (see pfsense.describe_arp_interfaces' docstring -- VLAN
-        # sub-interfaces are the usual culprit). Best-effort diagnosis,
-        # surfaced right in the Settings UI's sync-status line rather than
-        # only in server logs; never let it turn a real "ok" into a
-        # reported failure.
+    selected = sorted(json.loads(instance.get("selected_interfaces") or "[]"))
+    hit_ifaces = {item["interface"] for item in seen}
+    cold_selected = [s for s in selected if s not in hit_ifaces]
+    status = f"ok ({len(seen)} matched)" if cold_selected else "ok"
+    if cold_selected:
+        # At least one selected interface got zero hits this sync. That's
+        # the normal, boring case once an interface has genuinely gone
+        # quiet -- but it's also exactly what a selected-vs-actual
+        # interface-identifier mismatch looks like (see
+        # pfsense.describe_arp_interfaces' docstring -- a VLAN's *own*
+        # description differing from its *assigned interface's*
+        # description is the usual culprit), so surface the raw ARP data
+        # right in the Settings UI's sync-status line rather than only in
+        # server logs. Best-effort: never let this diagnosis turn a real
+        # "ok" into a reported failure.
         try:
             diag = pfsense.describe_arp_interfaces(instance)
-            selected = sorted(json.loads(instance.get("selected_interfaces") or "[]"))
-            if diag["total"] and diag["interfaces"]:
+            if not diag["total"]:
+                status = f"{status} -- pfSense's ARP table is currently empty"
+            else:
+                unselected = [
+                    f"{b['translated']} ({b['count']})" for b in diag["breakdown"]
+                    if b["translated"] not in selected
+                ]
                 status = (
-                    f"ok (0 matched -- {diag['total']} ARP entries seen on interface(s) "
-                    f"{', '.join(diag['interfaces'])}; you have {', '.join(selected) or '(none)'} selected)"
+                    f"{status} -- no ARP activity translated to: {', '.join(cold_selected)}; "
+                    f"other interface value(s) pfSense's ARP table reports: {', '.join(unselected) or '(none)'}"
                 )
-            elif not diag["total"]:
-                status = "ok (0 matched -- pfSense's ARP table is currently empty)"
         except pfsense.PfsenseError:
             pass
     conn.execute(

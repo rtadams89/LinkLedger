@@ -127,26 +127,43 @@ def _interface_name_map(instance: dict) -> dict:
 
 
 def describe_arp_interfaces(instance: dict) -> dict:
-    """Diagnostic-only helper: fetches the ARP table and reports how many
-    rows it has and which interface identifiers actually appear on them,
-    translated through _interface_name_map() the same way
-    fetch_arp_and_leases() does -- completely ignoring
-    instance["selected_interfaces"] itself. Used by
+    """Diagnostic-only helper: fetches the ARP table and reports, per
+    *raw* interface value actually seen (before translation), how many
+    rows had it and what _interface_name_map() translates it to --
+    completely ignoring instance["selected_interfaces"] itself. Used by
     crud.sync_pfsense_instance to build a useful last_sync_status message
-    when a sync still matches zero devices even after that translation
-    (e.g. a naming scheme the map doesn't cover, or the interface really
-    doesn't have any current ARP traffic). Best-effort: callers should
-    treat a PfsenseError here as "couldn't get a diagnosis" and fall back
-    to a plain "ok", not as a sync failure."""
+    whenever a sync's matched count doesn't cover every selected
+    interface, since that's exactly the situation where a translation
+    gap (vs. "that interface genuinely has no traffic right now") needs
+    to be told apart -- e.g. if a VLAN sub-interface's *own* description
+    (set under Interfaces > VLANs) differs from its *assigned interface's*
+    description (set under Interfaces > Assignments, which is what
+    /api/v2/interfaces -- and thus _interface_name_map() -- actually
+    exposes), the raw value pfSense's ARP table reports for that VLAN
+    won't be a key in the map at all, and translation silently falls
+    back to passing the raw value through unchanged (see
+    _interface_name_map()'s "best-effort" fallback) -- which then can't
+    match a selected_interfaces entry that uses the *assignment's* name.
+    Best-effort: callers should treat a PfsenseError here as "couldn't
+    get a diagnosis" and fall back to a plain "ok", not as a sync
+    failure."""
     name_map = _interface_name_map(instance)
     arp_data = _get(instance, "/api/v2/diagnostics/arp_table")
     arp_rows = arp_data.get("data", arp_data) if isinstance(arp_data, dict) else arp_data
-    seen = set()
+    raw_counts: dict[str, int] = {}
     for row in arp_rows or []:
         raw_iface = row.get("interface") or row.get("if") or ""
         if raw_iface:
-            seen.add(name_map.get(raw_iface, raw_iface))
-    return {"total": len(arp_rows or []), "interfaces": sorted(seen)}
+            raw_counts[raw_iface] = raw_counts.get(raw_iface, 0) + 1
+    breakdown = [
+        {"raw": raw, "translated": name_map.get(raw, raw), "count": count}
+        for raw, count in sorted(raw_counts.items())
+    ]
+    return {
+        "total": len(arp_rows or []),
+        "interfaces": sorted({b["translated"] for b in breakdown}),
+        "breakdown": breakdown,
+    }
 
 
 def fetch_arp_and_leases(instance: dict) -> list[dict]:
@@ -164,6 +181,18 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
     statically-addressed device with no lease still comes through from
     ARP alone -- using its own resolved hostname field, if any, before
     falling back to the DHCP lease's.
+
+    A lease's own `hostname` field only gets populated when the client
+    itself sends DHCP option 12 (client-hostname) -- plenty of real
+    devices (several Apple product lines historically, Android, most
+    IoT/embedded clients, and DHCPv6 clients in general) never send it,
+    so that field legitimately comes back blank even for a device with a
+    real, named lease. For a static DHCP mapping specifically, the
+    human-entered name lives in the lease's separate `descr` field
+    instead -- so that's included in the fallback chain too, below the
+    client-sent hostname but above nothing (an unnamed dynamic lease for
+    an option-12-silent client still has no name to show, which is
+    correct -- there isn't one to find).
 
     The ARP table's "interface" field is translated through
     _interface_name_map() before comparing against selected_interfaces --
@@ -207,6 +236,6 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
             "mac": mac,
             "interface": iface,
             "ip": row.get("ip_address") or row.get("ip") or "",
-            "dns_name": row.get("hostname") or lease.get("hostname") or "",
+            "dns_name": row.get("hostname") or lease.get("hostname") or lease.get("descr") or "",
         })
     return out
