@@ -1,5 +1,6 @@
 """SQLite access layer."""
 
+import json
 import logging
 import os
 import shutil
@@ -217,6 +218,28 @@ def _migrate(conn):
         meta_key = f"map_hide_{role.lower().replace(' ', '_')}_backfill"
         if conn.execute("SELECT 1 FROM meta WHERE key = ?", (meta_key,)).fetchone() is None:
             conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = ?", (role,))
+            conn.execute("INSERT INTO meta (key, value) VALUES (?, '1')", (meta_key,))
+
+    # One-time backfill: "Devices missing a model" and "Ports missing a MAC
+    # address" were added to the Reports tab after some installs may have
+    # already narrowed their enabled-reports list via Settings. Without
+    # this, those two reports would stay silently hidden forever on such an
+    # install -- the user never got a chance to see and choose them.
+    for report_key in ("missing_model", "missing_mac"):
+        meta_key = f"reports_backfill_{report_key}"
+        if conn.execute("SELECT 1 FROM meta WHERE key = ?", (meta_key,)).fetchone() is None:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'enabled_reports'").fetchone()
+            if row and row["value"]:
+                try:
+                    saved = json.loads(row["value"])
+                except (ValueError, TypeError):
+                    saved = None
+                if isinstance(saved, list) and report_key not in saved:
+                    saved.append(report_key)
+                    conn.execute(
+                        "UPDATE meta SET value = ? WHERE key = 'enabled_reports'",
+                        (json.dumps(saved),),
+                    )
             conn.execute("INSERT INTO meta (key, value) VALUES (?, '1')", (meta_key,))
 
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")

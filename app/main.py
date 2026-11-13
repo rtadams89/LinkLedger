@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind, pfsense
 
-VERSION = "1.10.4"
+VERSION = "1.10.5"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
