@@ -1,13 +1,7 @@
 // ---------------------------------------------------------------------------
-// Browser back/forward -- uses the History API to give the back/forward
-// buttons a real place to go through LinkLedger's own view history. Every
-// navigation (see navigateTo() below) pushes one history entry; popstate
-// re-renders whatever view the browser lands back on. Each history entry
-// also carries the scrollY the page was at when navigated away from, so
-// back/forward restores scroll position.
+// Browser back/forward -- each navigateTo() pushes a history entry (with
+// scrollY) so popstate can re-render the view and restore scroll position.
 // ---------------------------------------------------------------------------
-// Leaves scroll restoration on popstate entirely to the code below instead
-// of the browser's own guess.
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
 window.addEventListener("popstate", (e) => {
@@ -109,10 +103,8 @@ const VLAN_POE_CAPABLE_ROLES = ["Switch", "Router/Firewall"];
 // db.VIRTUAL_SWITCH_ROLES on the backend.
 const VIRTUAL_SWITCH_ROLES = ["AP Group", "Virtual Switch"];
 
-// Values are CSS var() references (not literal hex) so these colors stay
-// theme-aware -- see the --tag-*/--bg-subtle/--text token definitions in
-// style.css (light values in :root, dark values in the two dark-mode
-// blocks near the end of that file).
+// Values are CSS var() references, not literal hex, so colors follow
+// the active theme.
 const ROLE_COLORS = {
   "Switch": "var(--tag-green-bg)", "Patch Panel": "var(--bg-subtle)", "Router/Firewall": "var(--tag-orange-bg)",
   "Hypervisor": "var(--tag-purple-bg)", "NAS": "var(--tag-yellow-bg)", "Client": "var(--tag-sky-bg)", "Server": "var(--tag-indigo-bg)",
@@ -147,12 +139,11 @@ function escBreakable(s) {
 // Four views: "browse" (the device grid), "device" (one device's detail
 // page), "path" (path finder), "reports".
 //
-// renderView() draws a view with no history/scroll side effects, so it's
-// safe to call from popstate. Every user-initiated navigation goes through
-// navigateTo() instead, which also stamps the outgoing view's scroll
-// position and pushes a history entry. Refreshing the currently-open
-// device in place after an edit is neither of those -- see
-// refreshCurrentDevice().
+// renderView() draws a view with no history/scroll side effects. Every
+// user-initiated navigation instead goes through navigateTo(), which
+// also stamps the outgoing view's scroll position and pushes a history
+// entry. Refreshing the currently-open device in place after an edit is
+// neither of those.
 // ---------------------------------------------------------------------------
 let currentDeviceId = null;
 let lastViewedDeviceId = null;
@@ -185,9 +176,9 @@ async function renderView(state) {
   else await renderBrowseHome();
 }
 
-// Normalizes a portId argument (see deviceHref() below) -- a single id,
-// an array of ids, or already a comma-joined string -- down to one
-// comma-joined string ("" if there's nothing to highlight).
+// Normalizes a portId argument -- a single id, an array of ids, or
+// already a comma-joined string -- down to one comma-joined string
+// ("" if there's nothing to highlight).
 function portIdsParam(portId) {
   if (portId === undefined || portId === null || portId === "") return "";
   const ids = Array.isArray(portId) ? portId : [portId];
@@ -195,8 +186,8 @@ function portIdsParam(portId) {
 }
 
 // The address bar reflects the current device as ?device=<id>, plus
-// ?port=<id>[,<id>] for state.port (one or more port ids, comma-joined,
-// see portIdsParam() above) to scroll to and highlight on arrival.
+// ?port=<id>[,<id>] for state.port (one or more port ids, comma-joined)
+// to scroll to and highlight on arrival.
 function urlForState(state) {
   if (!(state && state.tab === "device" && state.id)) return location.pathname;
   return `${location.pathname}?device=${state.id}${state.port ? `&port=${state.port}` : ""}`;
@@ -213,8 +204,8 @@ function initialStateFromUrl() {
 }
 
 // The href for a link to a device; pair with deviceLinkClick() on the
-// same element. Pass portId (a single id, or an array -- see
-// portIdsParam()) to scroll to and highlight specific port(s) on arrival.
+// same element. Pass portId (a single id, or an array) to scroll to and
+// highlight specific port(s) on arrival.
 function deviceHref(id, portId) {
   const p = portIdsParam(portId);
   return `${location.pathname}?device=${id}${p ? `&port=${p}` : ""}`;
@@ -415,7 +406,7 @@ function lagRows(d) {
 }
 
 // Navigates to a device. Pushes a history entry and scrolls to top, or
-// to the given port(s) if portId is passed (see portIdsParam() above).
+// to the given port(s) if portId is passed.
 async function viewDevice(id, portId) {
   searchInput.value = "";
   resultsBox.classList.remove("show");
@@ -496,8 +487,8 @@ async function renderDeviceView(id, highlightPortId) {
           <td>${portActions(p, d.role)}</td>
         </tr>`).join("")}</table>`;
     }
-    // No generic "+ Add port(s)" button here; "+ Add paired ports" is the
-    // only flow that produces a correctly named, paired port.
+    // "+ Add paired ports" is the only flow that produces a correctly
+    // named, paired port.
     { const nextStart = nums.length ? Math.max(...nums.map(Number)) + 1 : 1;
     extraButtons = `<button class="btn small admin-only" onclick="openPatchPanelModal(${d.id}, ${nextStart})">+ Add paired ports</button>`; }
   } else {
@@ -536,10 +527,9 @@ async function renderDeviceView(id, highlightPortId) {
 }
 
 // Scrolls to and briefly highlights one or more specific ports (accepts
-// the single-id/array/comma-string forms from portIdsParam() above). A
-// regular device's ports table tags each whole <tr> with data-port-row; a
-// patch panel's table tags each <td> in a pair's row with data-port-cell,
-// since "device side" and "switch side" can be different connections.
+// the single-id/array/comma-string forms). A regular device's ports
+// table tags each whole <tr> with data-port-row; a patch panel's table
+// tags each <td> in a pair's row with data-port-cell.
 function highlightPorts(portIds) {
   const ids = (Array.isArray(portIds) ? portIds : String(portIds).split(","))
     .map(x => String(x).trim()).filter(Boolean);
@@ -718,7 +708,7 @@ function pathSegmentHTML(seg, isFirst, isLast) {
     : "";
   // A regular hop's segment has one real port; a patch-panel pass-through
   // segment has two (rear and front); a virtual-switch hop has none
-  // (port_id is null). See highlightPorts().
+  // (port_id is null).
   const portIds = seg.ports.map(p => p.port_id).filter(id => id !== null && id !== undefined);
   return `<div class="path-hop">
     <div class="path-hop-device"><a class="link" href="${deviceHref(seg.device_id, portIds)}" title="${esc(seg.device_name)}" onclick="deviceLinkClick(event, ${seg.device_id}, [${portIds.join(",")}])">${esc(seg.device_name)}</a> ${roleBadge(seg.device_role)}</div>
@@ -785,16 +775,10 @@ async function submitFindPath() {
 let LAST_PATH_RESULT = null;
 
 // ---------------------------------------------------------------------------
-// Map -- a to-scale graphical layout of every device and cable, drawn as
-// plain SVG. By default each device's ports wrap into a single row
-// (mapAutoGridLayout); "Edit port layout" on the device page switches a
-// device to a free-form per-port grid instead (mapCustomGridLayout), so
-// e.g. a patch panel split across two rows of 12 can look like one on the
-// map. A patch panel's front/rear pair renders as a single jack either
-// way, since that's the same physical point with a cable on each side;
-// everything else gets one jack per port. LAG members and multiple
-// patch-panel runs each keep their own line (offset slightly apart)
-// since they're really separate cables.
+// Map -- a to-scale SVG layout of every device and cable. Ports wrap into a
+// grid (mapAutoGridLayout, or mapCustomGridLayout via "Edit port layout").
+// A patch panel's front/rear pair renders as one jack (same physical point);
+// LAG members and parallel patch-panel runs keep separate, offset lines.
 // ---------------------------------------------------------------------------
 const MAP_JACK = 22;
 const MAP_JACK_R = 5;
@@ -813,11 +797,7 @@ let PENDING_MAP_HIGHLIGHT = null;
 let MAP_DRAG = null;
 let MAP_PAN = null;
 let MAP_SUPPRESS_CLICK = false;
-// The cable/vlink group currently under the pointer, or null. Letting a
-// specific cable be traced by just hovering it (see mapSetHoverEdge)
-// matters most on a busy diagram -- e.g. a dense run of patch-panel-to-
-// switch cables where several routes pass close enough together that
-// it's hard to tell by eye alone where any one of them starts and ends.
+// The cable/vlink group currently under the pointer, or null.
 let MAP_HOVER_EL = null;
 
 function mapIndexPorts(data) {
@@ -853,15 +833,9 @@ function mapDevicePositions(dev) {
   return ports.map(p => ({ key: p.id, ports: [p] }));
 }
 
-// Shared by the Map tab's custom-mode rendering and the port-layout
-// editor (see openPortLayoutModal): reads each position's own stored
-// grid_row/grid_col when the WHOLE group (both ports of a patch-panel
-// pair) has one, and falls back to a deterministic slot -- appended in a
-// new row below whatever's already placed -- for a group that doesn't
-// (e.g. a port added to a device that's already in custom mode, before
-// ever being dragged anywhere). `fallbackCols` only bounds how those
-// fallback slots wrap; it has no effect once every group has a real
-// position. Returns {positions:[...{...group, row, col}], cols, rows}.
+// Shared by the Map tab's custom mode and the port-layout editor: uses each
+// group's stored grid_row/grid_col when set, else appends a new row below
+// (e.g. for a port never dragged yet). Returns {positions, cols, rows}.
 function mapCustomGridLayout(positions, fallbackCols) {
   const known = [], unknown = [];
   positions.forEach(pos => {
@@ -882,11 +856,9 @@ function mapCustomGridLayout(positions, fallbackCols) {
 }
 
 // The current ports_per_row-wrap layout, expressed the same shape as
-// mapCustomGridLayout's return value -- used both as mapNodeBox's normal
+// mapCustomGridLayout's return value. Used both as mapNodeBox's normal
 // ('auto' mode) path and as the port-layout editor's starting point when
-// a device hasn't been switched to a custom layout yet (see
-// openPortLayoutModal), so the editor opens from something familiar
-// instead of a blank grid.
+// a device hasn't been switched to a custom layout yet.
 function mapAutoGridLayout(positions, portsPerRow) {
   // wrapCols is how many positions fit before wrapping to the next row;
   // cols is how many are actually ever occupied (e.g. 3 ports with
@@ -912,19 +884,8 @@ function mapNodeBox(dev) {
 }
 
 // Grid fallback, grouped by site, for any device with no saved position
-// yet -- just a starting point until it's dragged into its real spot.
-// Walks each candidate grid slot forward until it finds one that doesn't
-// overlap a box that's already spoken for -- either a device the user
-// has deliberately dragged somewhere (pos_x/pos_y set), or an
-// already-auto-placed device from earlier in this same pass. Without
-// this, a plain sequential grid can land a brand-new, never-positioned
-// device's box directly on top of one the user placed on purpose
-// (coincidence, but a near-guarantee in a big imported dataset where
-// most devices haven't been dragged into place yet); the router then
-// can't find any path in or out of whichever device lost the ownership
-// tie for the shared cells, and the cable for it falls back to a raw
-// straight line that cuts through the whole diagram ignoring every
-// other box in its way.
+// yet. Walks slots forward until one doesn't overlap an already-placed
+// box (user-positioned or auto-placed this pass).
 function mapAutoPlace(devices) {
   const PAD = 24;
   const boxOf = {};
@@ -1016,9 +977,7 @@ function mapPositionStatus(pos, cabled) {
 // Node rendering is split into two layers -- the box (rect+label) and
 // the jacks -- drawn on either side of the cable edges in drawMap(), so
 // a cable is visible crossing into its own endpoint device's box up to
-// the jack, instead of being hidden behind that device's opaque
-// rectangle (which used to make every cable look like it stopped at the
-// device's edge rather than reaching the specific port).
+// the jack.
 function mapNodeBoxSVG(dev) {
   const box = MAP_NODE_BOX[dev.id];
   const origin = MAP_NODE_ORIGIN[dev.id];
@@ -1027,8 +986,8 @@ function mapNodeBoxSVG(dev) {
   const hl = MAP_HIGHLIGHT;
   const nodeHL = !!(hl && hl.deviceIds.has(dev.id));
   // A normally-hidden device only ever reaches this function when it's
-  // pulled onto the map by a highlighted path (see mapFilteredDevices) --
-  // styled as a dashed/dimmed box so it still reads as "normally hidden".
+  // pulled onto the map by a highlighted path, styled as a dashed/dimmed
+  // box so it still reads as "normally hidden".
   const isHidden = !dev.show_on_map;
   const draggable = isAdmin() ? " map-node-draggable" : "";
   return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
@@ -1052,18 +1011,10 @@ function mapNodeJacksSVG(dev) {
 }
 
 // ---------------------------------------------------------------------------
-// Cable routing -- orthogonal (45/90-degree-turn only) paths between the
-// two exact jacks, instead of a straight line cutting through whatever's
-// in between. This is an 8-directional A* over a coarse grid: every
-// device's box (plus a little clearance) is an obstacle, a cable's own
-// two endpoint devices are exempt from blocking its own route (so it can
-// actually leave/reach its jack), and a shared "congestion" counter nudges
-// later cables a lane or two away from corridors earlier ones already
-// used, so parallel runs spread out instead of stacking on top of each
-// other -- including LAG members and multiple patch-panel runs between
-// the same pair of devices, which used to get a fixed perpendicular
-// offset; the router now handles that spacing the same way it does for
-// any other pair of nearby cables.
+// Cable routing -- 8-directional A* for orthogonal jack-to-jack paths.
+// Device boxes are obstacles (a cable's own endpoints are exempt); a shared
+// congestion counter nudges later cables into their own lane so parallel
+// runs (LAGs, multiple patch-panel cables) spread out instead of stacking.
 // ---------------------------------------------------------------------------
 const MAP_ROUTE_CELL = 14;
 const MAP_ROUTE_TURN_PENALTY = 0.75;
@@ -1143,20 +1094,8 @@ function mapBuildRouteGrid(devices) {
   };
 }
 
-// `rowSign` lets the caller pick which way to round the row when a jack's
-// exact pixel y doesn't land on a grid line (it practically never does):
-// 0 (default) rounds to the NEAREST row, same as before. A nonzero sign
-// instead rounds toward that direction (+1 = down = ceil, -1 = up =
-// floor), so the quantized cell never sits on the wrong side of the exact
-// jack from where the cable is actually headed. Without this, the jack's
-// own row could round to the opposite side by up to half a cell (~7px)
-// regardless of the cable's real direction -- harmless for the A* path
-// itself, but the lead-in/out stub connecting the exact jack pixel back
-// to that row (see mapRouteOrthogonalize) would then have to visibly dip
-// the "wrong" way for an instant before the path can turn back toward
-// its real destination. Two cables sharing one jack (e.g. a patch
-// panel's front/rear pair) but headed opposite directions would both
-// show that same wrong-way dip, looking like neither one picked a side.
+// `rowSign` picks which way to round a jack's row to the grid: 0 rounds
+// to nearest, +1/-1 rounds toward that direction.
 function mapRouteCellOf(grid, x, y, rowSign) {
   const c = Math.round((x - grid.originX) / MAP_ROUTE_CELL);
   const rawR = (y - grid.originY) / MAP_ROUTE_CELL;
@@ -1183,36 +1122,14 @@ function mapRouteHeuristic(a, b) {
   return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); // octile distance
 }
 
-// Only exempt a small neighborhood around one endpoint's own jack (not
-// that device's whole footprint) from blocking -- just enough for a
-// route to step out of the device to reach that specific jack cleanly,
-// without turning the rest of a big multi-port box (e.g. a 24-port
-// patch panel) into a shortcut other cables can cut through on their way
-// to a different jack, which used to produce a tangle of crossing lines
-// inside the box instead of each cable approaching its own port directly.
-//
-// The exemption is deliberately anisotropic, not a plain radius: jacks
-// on a device sit in one or more horizontal rows (see mapBuildLayout), so
-// a generous radius in every direction let a route slide *sideways*
-// along the row through other ports' cells on its way to its own jack --
-// exactly the "cable cuts across several unrelated ports before landing
-// on its real one" look. MAP_ROUTE_EXEMPT_RADIUS_X stays at 0 -- the
-// jack's own grid column only, nothing either side -- so a route can
-// only approach a jack head-on from directly above/below it; ports sit
-// much closer together (MAP_JACK, 22px) than the routing grid's own
-// resolution (MAP_ROUTE_CELL, 14px), so even a 1-cell margin each side
-// can still reach a neighboring jack. _Y is generous enough to span the
-// device's whole box top-to-bottom regardless of how many port rows it
-// has, so entry from either edge still reaches it.
-//
-// `exitSign` restricts that vertical slack to one side only: positive
-// exits downward only, negative upward only, 0 (or omitted) keeps the
-// old symmetric behavior. mapRouteCable passes whichever side is
-// actually closer to the OTHER endpoint, so a jack exits toward its own
-// destination instead of a fixed/arbitrary direction -- otherwise two
-// cables that happen to share one physical jack (e.g. a patch panel's
-// front/rear pair, see mapDevicePositions) could both get forced out the
-// same side and overlap for a few cells before they're able to diverge.
+// Exempts only a small neighborhood around one jack (not the whole device
+// box) from blocking, so a big multi-port box doesn't become a shortcut
+// other cables cut through. Radius is 0 horizontally (jack's own column
+// only -- rows are closer together than the grid cell size) and generous
+// vertically (spans the box). `exitSign` biases that vertical slack to
+// one side, toward the other endpoint, so two cables sharing one jack
+// (e.g. a patch panel's front/rear pair) exit opposite ways instead of
+// overlapping.
 const MAP_ROUTE_EXEMPT_RADIUS_X = 0;
 const MAP_ROUTE_EXEMPT_RADIUS_Y = 6;
 function mapRouteExemptCells(grid, cell, devId, exitSign) {
@@ -1298,20 +1215,16 @@ function mapRouteAStar(grid, start, end, exempt, win) {
 // common case (nothing in the way) stays fast, while a route that needs a
 // long detour still eventually finds one.
 function mapRouteCable(grid, aCell, bCell, aDevId, bDevId) {
-  // Exit toward whichever side is actually closer to the other endpoint
-  // (see mapRouteExemptCells) -- 0 (same row, or exactly unclear) falls
-  // back to the old either-direction behavior.
+  // Exit toward whichever side is actually closer to the other endpoint;
+  // 0 (same row, or exactly unclear) falls back to either-direction.
   const aSign = bCell.r === aCell.r ? 0 : Math.sign(bCell.r - aCell.r);
   const bSign = aCell.r === bCell.r ? 0 : Math.sign(aCell.r - bCell.r);
   const path = mapRouteCableTry(grid, aCell, bCell, aDevId, bDevId, aSign, bSign);
   if (path) return path;
-  // The directional bias above can occasionally box a route in
-  // entirely -- e.g. the only actual way out is the "wrong" side (a
-  // device backed up against the edge of everything else on the map) --
-  // in which case fall back to the old symmetric (either-direction)
-  // exemption rather than ever leaving a cable unrouted (which would
-  // fall all the way back to a raw straight line cutting across the
-  // whole diagram -- see the "boxed in somehow" fallback below).
+  // The directional bias above can occasionally box a route in entirely
+  // (e.g. a device backed up against the edge of everything else on the
+  // map); in that case, fall back to the symmetric (either-direction)
+  // exemption.
   if (aSign !== 0 || bSign !== 0) return mapRouteCableTry(grid, aCell, bCell, aDevId, bDevId, 0, 0);
   return null;
 }
@@ -1370,15 +1283,9 @@ function mapRouteSimplify(grid, cellPath) {
 // path, lead-in stub included, only ever turns at 45 or 90 degrees.
 // Returns [a, b] unchanged if the direct line is already aligned.
 //
-// `jackIsA` says which end is the exact jack (true for a lead-in, where
-// the route starts at the jack; false for a lead-out, where it ends at
-// one) -- the elbow always goes at {jack's x, other point's y}, so the
-// segment touching the jack is the VERTICAL leg and the horizontal leg
-// stays out at the grid point's y, away from the jack's own row. Jacks
-// on a device always sit in a horizontal row (see mapBuildLayout), so
-// picking the elbow by whichever of dx/dy was larger (the old approach)
-// could send the horizontal leg right along the jack's row at its own
-// y -- visually cutting across whatever other jacks were in the way.
+// `jackIsA` says which end is the exact jack. The elbow always goes at
+// {jack's x, other point's y}, so the leg touching the jack is vertical --
+// keeps the horizontal leg off the jack's row, away from other jacks.
 function mapRouteOrthogonalize(a, b, jackIsA) {
   const dx = b.x - a.x, dy = b.y - a.y;
   if (Math.abs(dx) < 0.05 || Math.abs(dy) < 0.05 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 0.05) {
@@ -1396,17 +1303,10 @@ function mapPointInBox(p, origin, box) {
   return p.x >= origin.x && p.x <= origin.x + box.width && p.y >= origin.y && p.y <= origin.y + box.height;
 }
 
-// Cable edges are now drawn ON TOP of device boxes (so a cable stays
-// visible as it runs into its own endpoint's box to reach an interior
-// port -- see drawMap's layering comment). That means a single fat,
-// generously-clickable hit path for the *whole* cable would also sit on
-// top of the open interior of whichever device box the lead-in/lead-out
-// happens to cross, stealing clicks meant for the device itself. Splits
-// the polyline into the small "inside a device's own box" end stretches
-// (walked from each end while points stay inside that device's box) and
-// the "open canvas" middle stretch, so only the middle gets the generous
-// 12px hit width -- the two end stretches get a slimmer one, just enough
-// to click the cable deliberately without blanketing the box.
+// Cables draw on top of device boxes, so a single fat clickable hit path
+// would steal clicks meant for the device. Splits the polyline into slim
+// end stretches (inside each device's box) and a generously-wide middle
+// stretch (open canvas).
 function mapHitSplit(points, aBox, bBox) {
   const n = points.length;
   let i = 0;
@@ -1425,16 +1325,11 @@ function mapHitSplit(points, aBox, bBox) {
   };
 }
 
-// Each cable is a group with invisible "hit" paths (SVG hit-testing only
-// covers what's actually painted, and a 1.6px line is hard to click)
-// plus the thin path that's actually seen. The hit area is split into a
-// generous 12px-wide stretch over open canvas and slimmer 6px stretches
-// over the bit that dips inside each endpoint device's own box (see
-// mapHitSplit) so it stays easy to click the cable near a port without
-// making it hard to click the device box underneath it elsewhere.
-// data-a-port/data-b-port stay on the group purely so a live drag can
-// swap in a cheap straight-line preview (see mapUpdateEdgesForDevice)
-// before the real route is recomputed on drop.
+// Each cable is a group with invisible wide "hit" paths (a 1.6px line is
+// hard to click) plus the thin visible path, split per mapHitSplit so hit
+// area doesn't blanket the device box underneath. data-a-port/data-b-port
+// let a live drag swap in a straight-line preview before the real route
+// is recomputed on drop.
 function mapCableSVG(c, points, highlighted) {
   if (!points || points.length < 2) return "";
   const d = mapPolylinePath(points);
@@ -1459,30 +1354,18 @@ function mapCollectVLinks(devices) {
   const out = [];
   devices.forEach(dev => {
     if (!VIRTUAL_SWITCH_ROLES.includes(dev.role)) return;
-    // Members (ports whose *only* connection is this virtual switch) and
-    // uplinks (a real port elsewhere that keeps its own cable too, but
-    // also bridges into this virtual switch -- see db.py's schema notes
-    // on virtual_switch_uplinks) both get a dashed virtual-link line to
-    // the switch's anchor. Without the uplink half of this, an AP Group
-    // or Virtual Switch whose members are all wireless/virtual (nothing
-    // but other dashed lines) renders with no visible connection at all,
-    // even when it has a perfectly real uplink back to its host.
+    // Members and uplinks both get a dashed vlink to the switch's anchor,
+    // so an AP Group/Virtual Switch with no real cables still shows its
+    // uplink connection.
     if (dev.members) dev.members.forEach(m => out.push({ port_id: m.port_id, device_id: m.device_id, vs_id: dev.id }));
     if (dev.uplinks) dev.uplinks.forEach(u => out.push({ port_id: u.port_id, device_id: u.device_id, vs_id: dev.id }));
   });
   return out;
 }
 
-// Like mapCableSVG: `points` is the already-routed polyline (same grid
-// router cables use -- see drawMap), so a virtual link no longer draws a
-// raw straight line that can cut straight through an unrelated device's
-// box sitting between the member/uplink and the switch. That mattered
-// for more than looks: a plain SVG line is hit-testable along its own
-// paint by default, so a vlink crossing a device box could silently eat
-// clicks meant for that device (reported as "clicking the map is not
-// opening some devices" -- the AP Group's long uplink line happened to
-// run right over the Internet node's box). mapHitSplit keeps that from
-// recurring the same way it already does for cables.
+// Like mapCableSVG: `points` is the already-routed polyline, not a raw
+// straight line, so a vlink can't cut through an unrelated device's box
+// and steal its clicks. mapHitSplit handles hit area as usual.
 function mapVLinkSVG(vl, points, highlighted) {
   if (!points || points.length < 2) return "";
   const d = mapPolylinePath(points);
@@ -1512,8 +1395,7 @@ function mapFilteredDevices() {
   const site = sel ? sel.value : "";
   const hl = MAP_HIGHLIGHT;
   // A highlighted path always renders in full, even across a site filter
-  // or a hidden (e.g. Client) device -- otherwise "Show on map" from the
-  // path finder could silently drop part of the route.
+  // or a hidden (e.g. Client) device.
   return MAP_DATA.devices.filter(d => {
     if (hl && hl.deviceIds.has(d.id)) return true;
     if (site && d.site !== site) return false;
@@ -1584,10 +1466,9 @@ function drawMap(opts) {
     const a = mapJackAbs(c.a_port_id) || mapAnchorAbs(c.a_device_id);
     const b = mapJackAbs(c.b_port_id) || mapAnchorAbs(c.b_device_id);
     if (!a || !b) return "";
-    // Round each endpoint's row toward its OWN actual direction (see
-    // mapRouteCellOf) -- from the exact jack pixels, not the as-yet-
-    // unquantized cells, so a tie rounds the same way the exempt bias
-    // below will.
+    // Round each endpoint's row toward its OWN actual direction, from the
+    // exact jack pixels, not the as-yet-unquantized cells, so a tie
+    // rounds the same way the exempt bias below will.
     const rowSign = a.y === b.y ? 0 : Math.sign(b.y - a.y);
     const aCell = mapRouteCellOf(grid, a.x, a.y, rowSign), bCell = mapRouteCellOf(grid, b.x, b.y, -rowSign);
     const cellPath = mapRouteCable(grid, aCell, bCell, c.a_device_id, c.b_device_id);
@@ -1597,7 +1478,7 @@ function drawMap(opts) {
       const grid_pts = mapRouteSimplify(grid, cellPath);
       // Swap the arbitrary stub between the exact jack and the nearest
       // grid point for an orthogonal lead-in/out, so even that stub
-      // only ever turns at 45/90 degrees (see mapRouteOrthogonalize).
+      // only ever turns at 45/90 degrees.
       const leadIn = mapRouteOrthogonalize(a, grid_pts[0], true);
       leadIn.pop();
       const leadOut = mapRouteOrthogonalize(grid_pts[grid_pts.length - 1], b, false);
@@ -1612,10 +1493,10 @@ function drawMap(opts) {
     const a = mapJackAbs(vl.port_id);
     const b = mapAnchorAbs(vl.vs_id);
     if (!a || !b) return "";
-    // Routed through the same grid the cables above use (see
-    // mapRouteCable) instead of a raw straight line, so a virtual link
-    // doesn't cut through -- and intercept clicks on -- some unrelated
-    // device sitting between the member/uplink and the switch.
+    // Routed through the same grid the cables above use, instead of a raw
+    // straight line, so a virtual link doesn't cut through -- and
+    // intercept clicks on -- some unrelated device sitting between the
+    // member/uplink and the switch.
     const rowSign = a.y === b.y ? 0 : Math.sign(b.y - a.y);
     const aCell = mapRouteCellOf(grid, a.x, a.y, rowSign), bCell = mapRouteCellOf(grid, b.x, b.y, -rowSign);
     const cellPath = mapRouteCable(grid, aCell, bCell, vl.device_id, vl.vs_id);
@@ -1668,16 +1549,9 @@ function mapResetView() {
   mapApplyViewport();
 }
 
-// Printing the Map tab needs the WHOLE diagram, not just whatever's
-// currently panned/zoomed into the on-screen viewport (which is clipped
-// to a fixed-height box on screen -- see .map-canvas-wrap). Rather than
-// fiddle with MAP_VIEW (which drives interactive panning/zooming), this
-// temporarily points the <svg> itself at the full content bounds via
-// viewBox, independent of MAP_VIEW, so the browser's print layout scales
-// the whole thing to fit the page (preserving aspect ratio) instead of
-// printing a cropped screenshot of the current pan position. See
-// .map-canvas-wrap / #mapSvg under @media print in style.css for the
-// companion CSS that lets it actually render at full size on the page.
+// Printing needs the whole diagram, not the clipped on-screen viewport.
+// Temporarily points <svg> at the full content bounds via viewBox
+// (independent of MAP_VIEW) so print scales to fit the page.
 function printMap() {
   const svg = document.getElementById("mapSvg");
   if (!svg) { window.print(); return; }
@@ -1714,8 +1588,7 @@ function mapUpdateEdgesForDevice(devId) {
     if (!a || !b) return;
     // Live-drag preview only: a plain straight line, so moving a node
     // doesn't re-run the router on every pointer event. drawMap() on
-    // drop (see the pointerup handler) replaces this with the real
-    // orthogonal route.
+    // drop replaces this with the real orthogonal route.
     const d = `M${a.x.toFixed(1)},${a.y.toFixed(1)} L${b.x.toFixed(1)},${b.y.toFixed(1)}`;
     g.querySelectorAll("path").forEach(path => path.setAttribute("d", d));
   });
@@ -1861,11 +1734,22 @@ function mapAttachHandlers(svg) {
 
   svg.addEventListener("pointerleave", () => mapSetHoverEdge(null));
 
+  // A cancelled gesture (e.g. the browser takes over for a system gesture)
+  // stops tracking the drag/pan without saving a possibly-incomplete position.
+  // (Not listening for lostpointercapture here: pointerup's own
+  // releasePointerCapture call below would trigger it and clear MAP_DRAG
+  // before pointerup's handler gets to read it.)
+  svg.addEventListener("pointercancel", () => {
+    const wasDragging = !!MAP_DRAG;
+    MAP_DRAG = null;
+    MAP_PAN = null;
+    if (wasDragging) drawMap(); // revert the unsaved drag preview
+  });
+
   svg.addEventListener("pointerup", async (e) => {
-    // Release capture before the click event fires -- otherwise a
-    // captured pointer retargets the click to the <svg> itself instead
-    // of the node/jack/edge actually under the cursor, and a plain
-    // (non-dragging) click on a device silently does nothing.
+    // Release capture before the click event fires. A captured pointer
+    // retargets the click event to the <svg> itself instead of the
+    // node/jack/edge actually under the cursor.
     if (svg.hasPointerCapture && svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
     if (MAP_DRAG) {
       const { devId, moved } = MAP_DRAG;
@@ -1880,11 +1764,8 @@ function mapAttachHandlers(svg) {
             body: JSON.stringify({ x, y }),
           });
           // The PUT above only updates the server; MAP_DATA.devices is a
-          // plain in-memory snapshot that nothing else refreshes, so
-          // without this the drawMap() call below re-derives the layout
-          // from the device's *old* (or still-null) pos_x/pos_y and the
-          // node visually snaps right back to wherever it was before the
-          // drag, undoing the drop entirely.
+          // plain in-memory snapshot that nothing else refreshes, so it
+          // needs updating here too.
           const dev = MAP_DATA.devices.find(d => d.id === devId);
           if (dev) { dev.pos_x = x; dev.pos_y = y; }
         } catch (err) { showToast(err.message, true); }
@@ -2112,10 +1993,9 @@ async function confirmDeleteDevice(id, name) {
 
 // --- Edit port layout -- a free-form per-port grid, maintained at the
 // device level and used by the Map tab instead of the sequential Ports
-// per row wrap once a device is switched into 'custom' mode (see
-// mapCustomGridLayout/mapAutoGridLayout in the Map section above). The
-// grid's own row/col numbers are purely a canvas-sizing/editing
-// convenience here -- only each position's own row/col is ever saved.
+// per row wrap once a device is switched into 'custom' mode. The grid's
+// own row/col numbers are purely a canvas-sizing/editing convenience
+// here -- only each position's own row/col is ever saved.
 // ---------------------------------------------------------------------------
 const PL_CELL = 44;
 const PL_MAX_GRID = 40;
@@ -2398,8 +2278,7 @@ async function submitEditPort(portId) {
 }
 
 // ---------------------------------------------------------------------------
-// Reports -- read-only data-quality checks (see crud.data_quality_report
-// on the backend).
+// Reports -- read-only data-quality checks.
 // ---------------------------------------------------------------------------
 
 // Each report is a plain <details>, collapsed by default. Title and
@@ -2445,9 +2324,8 @@ function reportUnmanagedSites(groups) {
     </div>`).join("");
 }
 
-// One entry per report key (see crud.REPORT_DEFS on the backend, which
-// supplies the title and display order). This map supplies the note text
-// and how to turn that key's slice of /api/reports into a count + body.
+// One entry per report key. This map supplies the note text and how to
+// turn that key's slice of /api/reports into a count + body.
 function reportRenderers(r, devGrid) {
   return {
     missing_site: () => ({
@@ -2470,6 +2348,10 @@ function reportRenderers(r, devGrid) {
     missing_speed: () => ({
       note: "Ports with no Speed set (excludes patch panel pass-through ports and wireless/virtual member links, which don't have a speed of their own).",
       count: r.missing_speed.length, body: reportPortsTable(r.missing_speed),
+    }),
+    missing_mac: () => ({
+      note: "Ports with no MAC address set (excludes patch panel pass-through ports and wireless/virtual member links, which don't have a hardware MAC of their own) &mdash; worth filling in so pfSense discovery can match them automatically.",
+      count: r.missing_mac.length, body: reportPortsTable(r.missing_mac),
     }),
     unused_ports: () => ({
       note: "Ports with no cable, no pairing, and no wireless/virtual link &mdash; just sitting there unconnected.",
@@ -2526,14 +2408,17 @@ async function renderReportsView() {
 // /api/settings/pfsense* endpoint is admin-only, same as this tab.
 // ---------------------------------------------------------------------------
 let discoveryInstanceFilter = "";
+let discoveryStatusFilter = "pending";
 
 async function renderDiscoveryView() {
   const box = document.getElementById("discoveryView");
   box.innerHTML = `<div class="card"><div class="empty-state">Loading…</div></div>`;
   let rows, instances;
   try {
+    const params = new URLSearchParams({ status: discoveryStatusFilter });
+    if (discoveryInstanceFilter) params.set("instance_id", discoveryInstanceFilter);
     [rows, instances] = await Promise.all([
-      api(`/api/discovery${discoveryInstanceFilter ? `?instance_id=${discoveryInstanceFilter}` : ""}`),
+      api(`/api/discovery?${params}`),
       api("/api/settings/pfsense"),
     ]);
   } catch (e) {
@@ -2543,12 +2428,14 @@ async function renderDiscoveryView() {
   const instanceOptions = instances.map(i =>
     `<option value="${i.id}" ${String(i.id) === String(discoveryInstanceFilter) ? "selected" : ""}>${esc(i.name)}</option>`
   ).join("");
+  const showingIgnored = discoveryStatusFilter === "ignored";
   box.innerHTML = `
     <div class="card">
       <div class="device-header">
         <strong>Discovered devices</strong>
-        <span class="note">${rows.length} pending</span>
+        <span class="note">${rows.length} ${showingIgnored ? "ignored" : "pending"}</span>
         <div class="spacer"></div>
+        <button class="btn small" onclick="onDiscoveryStatusFilterChange('${showingIgnored ? "pending" : "ignored"}')">${showingIgnored ? "Back to pending" : "View ignored"}</button>
         ${instances.length > 1 ? `
         <select id="discoveryInstanceFilter" style="width:auto;" onchange="onDiscoveryInstanceFilterChange(this.value)">
           <option value="">All instances</option>
@@ -2559,29 +2446,54 @@ async function renderDiscoveryView() {
       ${instances.length === 0 ? `
         <div class="empty-state">No pfSense instances are set up yet. Add one in <a class="link" onclick="window.open('/static/settings.html', '_blank')">Settings</a> to start finding new devices automatically.</div>
       ` : rows.length === 0 ? `
-        <div class="empty-state">No pending devices right now. New MACs seen in pfSense's ARP/DHCP data on an enabled interface show up here.</div>
+        <div class="empty-state">${showingIgnored ? "No ignored devices." : "No pending devices right now. New MACs seen in pfSense's ARP/DHCP data on an enabled interface show up here."}</div>
       ` : `
-        <table><tr><th>MAC address</th><th>DNS name</th><th>IP</th><th>Interface</th><th>Source</th><th>Last seen</th><th></th></tr>
+        <div style="overflow-x:auto;">
+        <table class="discovery-table"><tr><th>MAC address</th><th>DNS name</th><th>IP</th><th>Interface</th><th>Source</th><th>Last seen</th><th></th></tr>
           ${rows.map(discoveryRow).join("")}
         </table>
+        </div>
       `}
     </div>`;
 }
 
+// Short, fixed-format fields (MAC, timestamp) shouldn't wrap mid-character
+// just because the table is tight -- nowrap them and let the table's own
+// overflow-x:auto handle running out of room instead.
 function discoveryRow(r) {
-  return `<tr data-discovery-row="${r.id}">
-    <td style="font-family:monospace;">${esc(r.mac_address)}</td>
-    <td>${esc(r.dns_name || "—")}</td>
-    <td>${esc(r.ip_address || "—")}</td>
-    <td>${esc(r.interface || "—")}</td>
-    <td>${esc(r.instance_name)}${r.site ? ` <span class="note">(${esc(r.site)})</span>` : ""}</td>
-    <td>${esc(r.last_seen)}</td>
-    <td class="row-actions">
-      <button class="btn small" onclick="openImportDiscoveredModal(${r.id})">Create device</button>
+  const actions = r.status === "ignored"
+    ? `<button class="btn small" onclick="restoreDiscovered(${r.id})">Restore</button>`
+    : `<button class="btn small" onclick="openImportDiscoveredModal(${r.id})">Create device</button>
       <button class="btn small" onclick='openLinkDiscoveredModal(${r.id}, ${JSON.stringify(r.dns_name || "").replace(/'/g, "&#39;")})'>Link to port</button>
-      <button class="btn small danger" onclick="ignoreDiscovered(${r.id})">Ignore</button>
-    </td>
+      <button class="btn small danger" onclick="ignoreDiscovered(${r.id})">Ignore</button>`;
+  return `<tr data-discovery-row="${r.id}">
+    <td style="font-family:monospace; white-space:nowrap;">${esc(r.mac_address)}</td>
+    <td style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(r.dns_name || "")}">${esc(r.dns_name || "—")}</td>
+    <td style="white-space:nowrap;">${esc(r.ip_address || "—")}</td>
+    <td style="white-space:nowrap;">${esc(r.interface || "—")}</td>
+    <td style="white-space:nowrap;">${esc(r.instance_name)}${r.site ? ` <span class="note">(${esc(r.site)})</span>` : ""}</td>
+    <td style="white-space:nowrap;">${formatTimestamp(r.last_seen)}</td>
+    <td class="row-actions" style="white-space:nowrap;">${actions}</td>
   </tr>`;
+}
+
+function onDiscoveryStatusFilterChange(value) {
+  discoveryStatusFilter = value;
+  renderDiscoveryView();
+}
+
+async function restoreDiscovered(id) {
+  try {
+    await api(`/api/discovery/${id}/restore`, { method: "POST" });
+    showToast("Restored to pending");
+    renderDiscoveryView();
+  } catch (e) { showToast(e.message, true); }
+}
+
+function formatTimestamp(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d) ? esc(iso) : esc(d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }));
 }
 
 function onDiscoveryInstanceFilterChange(value) {
@@ -2647,7 +2559,7 @@ async function submitImportDiscovered(discoveredId) {
     model: document.getElementById("imp_model").value,
     notes: document.getElementById("imp_notes").value,
   };
-  if (siteVal) body.site = siteVal;  // omitted -> crud.import_discovered falls back to the instance's own site
+  if (siteVal) body.site = siteVal;  // omitted falls back to the instance's own site
   try {
     const device = await api(`/api/discovery/${discoveredId}/import`, { method: "POST", body: JSON.stringify(body) });
     closeModal();
@@ -2933,8 +2845,8 @@ async function submitConnect() {
     return;
   }
 
-  // Either end can be an already-in-use port (see onConnectDeviceChange) --
-  // warn exactly what's about to be disconnected before overwriting it.
+  // Either end can be an already-in-use port -- warn exactly what's
+  // about to be disconnected before overwriting it.
   const inUseWarnings = [];
   const sourceOpt = sourceSel?.selectedOptions[0];
   if (sourceOpt?.dataset.inuse) inUseWarnings.push(`the source port (currently connected to ${sourceOpt.dataset.connto})`);

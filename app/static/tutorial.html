@@ -95,6 +95,11 @@
       <li><a href="#cg-settings">Complete: Settings, accounts &amp; backups</a></li>
       <li><a href="#cg-clear">Complete: Clearing connections, or clearing everything</a></li>
       <li><a href="#cg-edge">Complete: Edge cases worth knowing about</a></li>
+      <li><a href="#pt3-dark">What's New: Dark mode</a></li>
+      <li><a href="#pt3-mac">What's New: Tracking MAC addresses</a></li>
+      <li><a href="#pt3-pfsense">What's New: Setting up pfSense discovery</a></li>
+      <li><a href="#pt3-discovery">What's New: Reviewing discovered devices</a></li>
+      <li><a href="#pt3-restore">What's New: Ignoring &amp; restoring</a></li>
     </ol>
   </div>
 
@@ -493,6 +498,103 @@
       you dismissed it with "Remind me later" it'll simply reappear next time you
       sign in as admin, until the password is actually changed.</li>
   </ul>
+
+  <!-- ============================================================ -->
+  <!-- PART 3: WHAT'S NEW                                            -->
+  <!-- ============================================================ -->
+  <div class="part-banner"><span class="part-label">Part 3</span> What's New — dark mode, MAC tracking &amp; pfSense discovery</div>
+  <p class="part-intro">Three features added since the rest of this tutorial was
+  written: a dark theme, optional MAC addresses on ports, and automatic discovery
+  of new devices via pfSense's ARP/DHCP data.</p>
+
+  <h2 id="pt3-dark">Dark mode</h2>
+  <p>The moon/sun icon next to <strong>Settings</strong>, top right of every page,
+  switches between light and dark. Left alone, LinkLedger instead follows your
+  OS/browser's own light/dark setting automatically — the toggle only matters once
+  you want to override that.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/26-dark-mode.png" alt="Browse devices grid in dark mode">
+    <figcaption>Same Browse devices grid as Quick Start, toggled to dark. The choice
+    is remembered in this browser, independent of your OS setting, until toggled
+    back.</figcaption>
+  </figure>
+
+  <h2 id="pt3-mac">Tracking MAC addresses</h2>
+  <p>Any port can optionally carry a MAC address, from the same edit-port dialog
+  covered in Quick Start — still layer 2 only, same as everything else in
+  LinkLedger; it doesn't track IP addresses. A port with one set shows it as a
+  small tag right on the device page, and the main search bar matches MAC
+  addresses the same way it matches names — paste one in with or without colons.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/27-port-mac-field.png" alt="Edit port modal for nas.example.lan's eth0 showing a MAC address field filled in, with the MAC tag visible on the port row behind it">
+    <figcaption>Setting a MAC on nas.example.lan's eth0 — the tag shows up on the
+    port row immediately (visible behind the dialog here).</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="/static/tutorial/img/28-mac-search.png" alt="Search bar matching nas.example.lan by a pasted MAC address with no colons">
+    <figcaption>Searching a MAC with no colons still matches — nas.example.lan,
+    found by the address just set above.</figcaption>
+  </figure>
+  <div class="callout note">
+    <strong>Why bother setting these</strong>
+    A MAC is what pfSense discovery (below) matches against to tell a device you've
+    already documented apart from a genuinely new one — and Reports' "Ports missing
+    a MAC address" check is a quick way to find ports worth filling in if you want
+    discovery to recognize more of your existing hardware automatically.
+  </div>
+
+  <h2 id="pt3-pfsense">Setting up pfSense discovery</h2>
+  <p>If your router is a pfSense firewall, LinkLedger can poll it for ARP/DHCP data
+  on an interval and surface anything it sees that isn't already a known MAC as a
+  reviewable candidate, instead of you having to notice a new device yourself. This
+  needs the third-party <strong>pfSense-pkg-RESTAPI</strong> package installed on
+  that pfSense box first — pfSense has no REST API of its own — covered in full on
+  the <a class="link" href="/static/help.html">Help</a> page; this tutorial picks up
+  from there, with the package already installed and a key already generated.</p>
+  <p>From Settings → <strong>pfSense device discovery</strong>, <strong>Add pfSense
+  instance</strong>: a name, optionally a Site (pre-fills new devices you create
+  from this instance's discoveries), the base URL, and the API key. <strong>Test
+  connection</strong> before saving confirms LinkLedger can actually reach it, and
+  lets you pick which interfaces/VLANs to pull ARP data from — handy for excluding
+  a guest VLAN you don't want showing up here at all.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/29-pfsense-settings.png" alt="pfSense device discovery card in Settings, showing one configured instance named Home pfSense, Main Office, last synced, with Sync now, Edit and Delete buttons">
+    <figcaption>One configured instance, synced and polling on its own schedule.
+    "Sync now" runs an immediate check without waiting for the next poll.</figcaption>
+  </figure>
+  <p>Once saved and enabled, LinkLedger polls it automatically in the background —
+  "Sync now" (here or on the Discovery tab itself) just jumps the queue for an
+  immediate check instead of waiting.</p>
+
+  <h2 id="pt3-discovery">Reviewing discovered devices</h2>
+  <p>New top-level <strong>Discovery</strong> tab, admin only. Every MAC pfSense has
+  seen that doesn't already match a port in LinkLedger shows up here as a pending
+  row — DNS name and IP come along when DHCP has them, but (like everywhere else in
+  LinkLedger) only ever shown here, never stored.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/30-discovery-pending.png" alt="Discovery tab with two pending discovered devices, showing MAC, DNS name, IP, interface, source instance, and last seen columns, with Create device / Link to port / Ignore buttons per row">
+    <figcaption>Two pending devices from the Home pfSense instance — one with a DNS
+    name, one without.</figcaption>
+  </figure>
+  <p>Per row: <strong>Create device</strong> opens the normal Add device dialog with
+  the Site pre-filled from the instance and the MAC pre-set on whatever port you
+  add; <strong>Link to port</strong> instead attaches the MAC to a port on an
+  existing device — a device/port picker pre-fills a match when the discovered DNS
+  name or MAC unambiguously points at one of your existing devices or ports;
+  <strong>Ignore</strong> drops it out of the pending list without creating or
+  linking anything, for things like a neighbor's device leaking onto a shared VLAN
+  that you never intend to document.</p>
+
+  <h2 id="pt3-restore">Ignoring &amp; restoring</h2>
+  <p><strong>View ignored</strong>, top right of the Discovery tab, switches to
+  everything you've ignored instead of the pending list. Ignoring something isn't
+  permanent — a <strong>Restore</strong> button on each ignored row puts it straight
+  back to pending, in case something you dismissed turns out to matter after all.</p>
+  <figure class="shot">
+    <img src="/static/tutorial/img/31-discovery-ignored.png" alt="Discovery tab switched to the ignored view, showing one ignored device with a Restore button and a Back to pending toggle">
+    <figcaption>The ignored view — one device dismissed earlier, with Restore ready
+    if that turns out to have been a mistake.</figcaption>
+  </figure>
 
   <div class="sample-cta">
     <div class="txt">

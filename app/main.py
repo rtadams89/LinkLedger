@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+import time
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File
@@ -11,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind, pfsense
 
-VERSION = "1.9.0"
+VERSION = "1.10.4"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -19,9 +20,9 @@ log = logging.getLogger("linkledger")
 # signed in via an in-app login form and a server-side session cookie.
 #
 # On first boot, seed_accounts() creates both accounts: admin gets a known
-# default password (see README), viewer gets a random one. After that, the
-# database is the source of truth; account usernames and passwords are
-# managed from the Settings page, not environment variables.
+# default password, viewer gets a random one. After that, the database is
+# the source of truth; account usernames and passwords are managed from
+# the Settings page, not environment variables.
 # ---------------------------------------------------------------------------
 
 _DEFAULT_ADMIN_PASS = "linkledger-admin"
@@ -44,13 +45,31 @@ VIEWER_USER = "viewer"
 
 def _session_for(request: Request):
     sid = request.cookies.get(SESSION_COOKIE)
-    return SESSIONS.get(sid) if sid else None
+    if not sid:
+        return None
+    sess = SESSIONS.get(sid)
+    if not sess:
+        return None
+    if time.time() - sess["created_at"] > SESSION_MAX_AGE:
+        SESSIONS.pop(sid, None)
+        return None
+    return sess
 
 
-def _set_session_cookie(response: Response, role: str, username: str) -> None:
+def _is_secure_request(request: Request) -> bool:
+    if request.url.scheme == "https":
+        return True
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    return forwarded_proto.split(",")[0].strip().lower() == "https"
+
+
+def _set_session_cookie(request: Request, response: Response, role: str, username: str) -> None:
     sid = secrets.token_urlsafe(32)
-    SESSIONS[sid] = {"role": role, "username": username}
-    response.set_cookie(SESSION_COOKIE, sid, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE)
+    SESSIONS[sid] = {"role": role, "username": username, "created_at": time.time()}
+    response.set_cookie(
+        SESSION_COOKIE, sid, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE,
+        secure=_is_secure_request(request),
+    )
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -80,15 +99,8 @@ app.add_middleware(AuthMiddleware)
 async def add_static_cache_headers(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/static/"):
-        # Without an explicit Cache-Control header, browsers fall back to
-        # heuristic caching and can keep serving an old app.js/style.css
-        # for a long time on an ordinary reload -- only a hard refresh
-        # (which bypasses the cache entirely) was picking up changes.
-        # "no-cache" still lets the browser keep a cached copy, but makes
-        # it revalidate with the server first every time; StaticFiles
-        # already sends ETag/Last-Modified, so an unchanged file comes
-        # back as a cheap 304 and only an actually-changed one is
-        # re-downloaded.
+        # Forces revalidation on every load instead of browser heuristic
+        # caching. StaticFiles' ETag makes an unchanged file a cheap 304.
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -110,12 +122,15 @@ def startup():
         )
 
 
-# pfSense device-discovery polling -- a single shared loop, woken every
+# pfSense device-discovery polling: a single shared loop, woken every
 # ~60s, that checks each enabled pfsense_instances row's own poll_minutes
-# due-check (see crud.sync_due_pfsense_instances). One loop rather than one
-# task per instance so instances can be added/edited/removed/toggled at
-# runtime without juggling a dynamic set of background tasks.
+# due-check.
 _PFSENSE_POLL_TICK_SECONDS = 60
+
+
+def _run_pfsense_poll_tick():
+    with db.session() as conn:
+        crud.sync_due_pfsense_instances(conn)
 
 
 @app.on_event("startup")
@@ -123,8 +138,9 @@ async def start_pfsense_poller():
     async def loop():
         while True:
             try:
-                with db.session() as conn:
-                    crud.sync_due_pfsense_instances(conn)
+                # The pfSense HTTP calls inside this tick are blocking, so run
+                # the whole thing in a worker thread instead of on the event loop.
+                await asyncio.get_running_loop().run_in_executor(None, _run_pfsense_poll_tick)
             except Exception:
                 log.exception("pfSense discovery poll loop hit an unexpected error")
             await asyncio.sleep(_PFSENSE_POLL_TICK_SECONDS)
@@ -155,8 +171,7 @@ class DeviceIn(BaseModel):
     site: str = ""
     notes: str = ""
     poe_required: bool = False
-    # None means "pick the default from role" (crud.create_device hides
-    # Clients by default); an explicit value always wins.
+    # None means "pick the default from role"; an explicit value always wins.
     show_on_map: Optional[bool] = None
 
 
@@ -213,7 +228,7 @@ class PortUpdate(BaseModel):
     speed: Optional[str] = None
     vlans: Optional[str] = None
     poe_supply: Optional[bool] = None
-    # Layer 2 only -- see ports.mac_address. Empty string clears it.
+    # Layer 2 only. Empty string clears it.
     mac_address: Optional[str] = None
 
 
@@ -274,8 +289,7 @@ class PfsenseInstanceUpdate(BaseModel):
     name: Optional[str] = None
     site: Optional[str] = None
     base_url: Optional[str] = None
-    # Blank/omitted leaves the stored key untouched -- see
-    # crud.update_pfsense_instance (a GET never returns the real key).
+    # Blank/omitted leaves the stored key untouched (a GET never returns the real key).
     api_key: Optional[str] = None
     verify_tls: Optional[bool] = None
     enabled: Optional[bool] = None
@@ -367,7 +381,7 @@ def api_set_device_position(device_id: int, body: PositionIn):
 
 
 # ---------------------------------------------------------------------------
-# Free-form port layout -- see crud.set_port_layout_mode / set_port_grid_positions.
+# Free-form port layout.
 # ---------------------------------------------------------------------------
 
 @app.put("/api/devices/{device_id}/port-layout-mode", dependencies=[Depends(require_admin)])
@@ -516,8 +530,8 @@ def api_set_port_lag(port_id: int, body: PortLagIn):
 
 
 # ---------------------------------------------------------------------------
-# Roles -- fixed list (see db.ROLES). Which ones show up in the Add/Edit
-# device Role dropdown is configurable via /api/settings/roles below.
+# Roles: a fixed list. Which ones show up in the Add/Edit device Role
+# dropdown is configurable via /api/settings/roles below.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/roles")
@@ -579,7 +593,7 @@ def api_set_speed_settings(body: EnabledSpeedsIn):
 
 
 # ---------------------------------------------------------------------------
-# Reports -- read-only data-quality checks (see crud.data_quality_report).
+# Reports: read-only data-quality checks.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/reports")
@@ -606,12 +620,8 @@ def api_set_report_settings(body: EnabledReportsIn):
 
 
 # ---------------------------------------------------------------------------
-# pfSense device discovery -- one or more pfSense instances (each via the
-# third-party pfSense-pkg-API package, see app/pfsense.py), polled for ARP
-# + DHCP data on their own interval, feeding the Discovery staging list
-# below. Settings (instance CRUD/test/interfaces) are admin-only; the
-# Discovery list and its resolving actions (ignore/import/link) are too,
-# since they write data.
+# pfSense device discovery: pfSense instances, polled for ARP/DHCP data,
+# feeding the Discovery staging list below. All admin-only.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/settings/pfsense", dependencies=[Depends(require_admin)])
@@ -665,6 +675,11 @@ def api_list_discovery(status: Optional[str] = "pending", instance_id: Optional[
 @app.post("/api/discovery/{discovered_id}/ignore", dependencies=[Depends(require_admin)])
 def api_ignore_discovered(discovered_id: int):
     return handle(crud.ignore_discovered, discovered_id)
+
+
+@app.post("/api/discovery/{discovered_id}/restore", dependencies=[Depends(require_admin)])
+def api_restore_discovered(discovered_id: int):
+    return handle(crud.restore_discovered, discovered_id)
 
 
 @app.post("/api/discovery/{discovered_id}/import", dependencies=[Depends(require_admin)])
@@ -761,12 +776,12 @@ def api_whoami(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/login")
-def api_login(body: LoginIn, response: Response):
+def api_login(body: LoginIn, request: Request, response: Response):
     with db.session() as conn:
         account = crud.verify_login(conn, body.username, body.password)
     if not account:
         raise HTTPException(status_code=401, detail="incorrect username or password")
-    _set_session_cookie(response, account["role"], account["username"])
+    _set_session_cookie(request, response, account["role"], account["username"])
     return {"role": account["role"], "username": account["username"]}
 
 
@@ -796,10 +811,9 @@ def api_change_password(body: ChangePasswordIn, request: Request, response: Resp
     if not account:
         raise HTTPException(status_code=403, detail="current password is incorrect")
 
-    # Invalidate every session on this account, then issue a fresh one so
-    # this request isn't logged out too.
+    # Invalidate every session on this account, then issue a fresh one.
     _invalidate_sessions_for_role(role)
-    _set_session_cookie(response, account["role"], account["username"])
+    _set_session_cookie(request, response, account["role"], account["username"])
     return {"ok": True}
 
 

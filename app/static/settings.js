@@ -1,6 +1,5 @@
 // ---------------------------------------------------------------------------
-// Settings page: Backup/Restore, account passwords, and Reset data. A
-// standalone page with its own small copies of the helpers it needs.
+// Settings page: Backup/Restore, account passwords, and Reset data.
 // ---------------------------------------------------------------------------
 
 async function api(path, options) {
@@ -48,6 +47,8 @@ async function loadSites() {
   try {
     SITES_CACHE = await api("/api/sites");
     renderSitesList();
+    // Keep an open pfSense editor's Site dropdown in sync with renames/deletes.
+    populatePfsenseSiteOptions();
   } catch (e) {
     document.getElementById("sitesError").innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
   }
@@ -317,8 +318,7 @@ async function submitPfsenseEditor() {
   try {
     let saved;
     if (id) {
-      // A blank API key field means "keep the current one" -- never
-      // overwrite it with an empty value.
+      // A blank API key field means "keep the current one".
       if (!fields.api_key) delete fields.api_key;
       saved = await api(`/api/settings/pfsense/${id}`, { method: "PUT", body: JSON.stringify(fields) });
     } else {
@@ -326,8 +326,7 @@ async function submitPfsenseEditor() {
     }
     showToast("pfSense instance saved");
     await loadPfsenseInstances();
-    // Keep editing (now with a real id) so Test connection / interface
-    // picking work right after the first save of a new instance.
+    // Keep editing, now with a real id.
     openPfsenseEditor(saved.id);
   } catch (e) {
     errBox.innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
@@ -359,17 +358,29 @@ async function loadPfsenseInterfacesInto(id) {
   const box = document.getElementById("pfsenseInterfacesBox");
   try {
     const interfaces = await api(`/api/settings/pfsense/${id}/interfaces`);
-    if (interfaces.length === 0) {
+    // An interface the instance already has selected but no longer reports
+    // (renamed/removed on the pfSense side) still needs a way to be seen
+    // and unchecked, instead of silently persisting as a hidden selection.
+    const liveNames = new Set(interfaces.map(iface => iface.name));
+    const stale = Array.from(PFSENSE_EDIT_SELECTED).filter(name => !liveNames.has(name));
+    if (interfaces.length === 0 && stale.length === 0) {
       box.innerHTML = `<p class="note" style="margin:10px 0;">That instance reported no interfaces.</p>`;
       return;
     }
-    box.innerHTML = `<label style="display:block; margin:10px 0 4px; font-size:13px; font-weight:600;">Interfaces/VLANs to pull ARP data from</label>` +
-      interfaces.map(iface => `
+    const liveHtml = interfaces.map(iface => `
         <label class="checkbox-field" style="display:flex; margin-bottom:4px;">
           <input type="checkbox" class="pfIfaceCheckbox" value="${esc(iface.name)}" ${PFSENSE_EDIT_SELECTED.has(iface.name) ? "checked" : ""}
             onchange="togglePfsenseInterface(this.value, this.checked)">
           ${esc(iface.label)}
         </label>`).join("");
+    const staleHtml = stale.map(name => `
+        <label class="checkbox-field" style="display:flex; margin-bottom:4px; color:var(--muted);">
+          <input type="checkbox" class="pfIfaceCheckbox" value="${esc(name)}" checked
+            onchange="togglePfsenseInterface(this.value, this.checked)">
+          ${esc(name)} <span class="note" style="margin-left:6px;">(no longer reported by pfSense -- uncheck to remove)</span>
+        </label>`).join("");
+    box.innerHTML = `<label style="display:block; margin:10px 0 4px; font-size:13px; font-weight:600;">Interfaces/VLANs to pull ARP data from</label>` +
+      liveHtml + staleHtml;
   } catch (e) {
     box.innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
   }

@@ -1,17 +1,14 @@
 :root {
   --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
   --blue: #3b82f6; --danger: #dc2626;
-  /* Dark-mode-aware tokens added alongside the original set above. Each
-     has a light value here and a dark value in the two blocks at the
-     bottom of this file (@media (prefers-color-scheme: dark) for "auto"
-     and :root[data-theme="dark"] for the explicit manual override). */
-  --danger-solid: #dc2626;      /* solid bg + white text (toast); stays dark/saturated in both themes for contrast */
-  --ink-bg: #0f172a;            /* solid dark surface for buttons/tabs/toast that always pair with white text */
-  --bg-subtle: #f1f5f9;         /* faint panel/hover/code background, one step lighter than --border */
-  --muted-light: #cbd5e1;       /* faint icon/empty-state color, lighter than --muted */
-  --border-strong: #94a3b8;     /* more visible border/stroke than --border */
-  --blue-strong: #2563eb;       /* emphasis stroke (map highlight/hover), stronger than --blue */
-  --slate: #334155;             /* dark-slate text, used on neutral badge backgrounds */
+  /* Dark-mode values for these are set further down. */
+  --danger-solid: #dc2626;      /* solid bg + white text (toast) */
+  --ink-bg: #0f172a;            /* solid dark surface for buttons/tabs/toast */
+  --bg-subtle: #f1f5f9;         /* faint panel/hover/code background */
+  --muted-light: #cbd5e1;       /* faint icon/empty-state color */
+  --border-strong: #94a3b8;     /* more visible border/stroke */
+  --blue-strong: #2563eb;       /* emphasis stroke (map highlight/hover) */
+  --slate: #334155;             /* dark-slate text on neutral badges */
   --slate-strong: #475569;      /* slightly lighter slate text */
   --status-ok: #22c55e;
   --status-partial: #f59e0b;
@@ -22,11 +19,7 @@
   --focus-ring: rgba(59,130,246,0.15);
   --port-hl-start: rgba(59,130,246,0.35);
   --port-hl-end: rgba(59,130,246,0.14);
-  /* Pastel badge/tag color pairs -- bg + text -- shared by style.css
-     classes (.poe-tag, .vlan-tag, .lag-tag, .speed-tag, .vlan-note-*) and
-     the inline colors app.js generates for ROLE_COLORS/ROLE_TEXT, the MAC
-     tag, the routed-via-router tags, and the discovery-count tags, so all
-     of them stay in sync and theme-aware from one definition. */
+  /* Pastel tag color pairs (bg + text). */
   --tag-red-bg: #fef2f2;      --tag-red-text: #b91c1c;
   --tag-green-bg: #dcfce7;    --tag-green-text: #15803d;
   --tag-orange-bg: #ffedd5;   --tag-orange-text: #c2410c;
@@ -53,14 +46,12 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .autocomplete { position:relative; }
 .results { position:absolute; top:calc(100% + 4px); left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-sm); max-height:320px; overflow:auto; z-index:20; display:none; }
 .results.show { display:block; }
-/* A wider dropdown for narrow fields (e.g. Path finder's Device A/B pickers). */
-.results.wide { min-width:420px; }
-/* .result-item and .device-chip below are real <a href> links; reset the
-   browser's default anchor styling so they look like plain clickable rows/chips. */
+/* A wider dropdown for narrow fields. */
+.results.wide { min-width:min(420px, 90vw); }
+/* Resets default <a> styling for .result-item and .device-chip. */
 .result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border); color:inherit; text-decoration:none; }
 .result-item:hover { background:var(--bg); }
-/* Wraps a name too long for the row onto a second line instead of
-   horizontal scroll. min-width:0 lets the flex item shrink/wrap. */
+/* Wraps a long name onto a second line; min-width:0 lets the flex item shrink. */
 .result-item span:first-child { overflow-wrap:anywhere; min-width:0; }
 .tag { font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; white-space:nowrap; }
 .tabs { display:flex; gap:8px; margin-bottom:16px; }
@@ -73,9 +64,8 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .device-header h2 { margin:0; font-size:18px; }
 .spacer { flex:1; }
 
-/* Reports tab: each report is a native <details>/<summary> pair (see
-   reportSection() in app.js). The summary reuses .device-header's flex
-   layout; a disclosure triangle is the only thing added here. */
+/* Each report is a native <details>/<summary> pair; the summary reuses
+   .device-header's flex layout, with a disclosure triangle added. */
 .report-card > summary { cursor:pointer; list-style:none; margin-bottom:0; }
 .report-card > summary::-webkit-details-marker { display:none; }
 .report-card > summary::before {
@@ -91,21 +81,18 @@ table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; 
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
 td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
-/* Alternating row shading. Targets td (not tr) so a header row, always
-   <th>, is never shaded. */
+/* Alternating row shading (targets td, not tr). */
 tr:nth-child(even) td { background:var(--bg); }
 .port-name { font-weight:600; font-family: ui-monospace, monospace; font-size:12.5px; }
-/* Highlights a port linked to from elsewhere (see highlightPorts() in
-   app.js): a bright flash that settles into a lingering tint. */
+/* Highlights a port: a bright flash that settles into a lingering tint. */
 @keyframes portHighlightFade {
   0% { background:var(--port-hl-start); }
   100% { background:var(--port-hl-end); }
 }
 .port-highlight { animation:portHighlightFade 2.2s ease-out forwards; }
 
-/* Styling for every in-app "click to jump to a device" link. Put
-   class="link" directly on the <a> itself, alongside its real href (see
-   deviceHref() in app.js) and onclick. */
+/* Styling for an in-app "click to jump to a device" link; apply
+   class="link" directly on the <a>. */
 a.link { color:var(--blue); text-decoration:none; font-weight:600; cursor:pointer; }
 a.link:hover { text-decoration:underline; }
 .chain .via { color:var(--muted); font-size:11px; }
@@ -146,8 +133,7 @@ button.icon-btn:hover { background:var(--bg-subtle); color:var(--danger); }
 .note { color: var(--muted); font-size: 12px; font-style: italic; }
 .note a.link { font-style: normal; }
 
-/* Edit port layout (free-form per-device port grid) -- see
-   openPortLayoutModal in app.js. */
+/* Edit port layout: free-form per-device port grid. */
 .pl-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
 .pl-canvas-wrap { border:1px solid var(--border); border-radius:8px; overflow:auto; max-height:50vh; background:var(--bg); }
 .pl-canvas {
@@ -201,7 +187,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
 .vlan-note-diff { background:var(--tag-orange-bg); color:var(--tag-orange-text); }
 .vlan-note-unknown { background:var(--bg-subtle); color:var(--muted); }
 
-/* Map tab -- SVG network diagram (see renderMapView() in app.js). */
+/* Map tab: SVG network diagram. */
 .map-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
 .map-zoom-controls { display:flex; gap:4px; }
 .map-canvas-wrap {
@@ -214,12 +200,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
 #mapSvg:active { cursor:grabbing; }
 .map-node-draggable { cursor:grab; }
 .map-jack, .map-edge, .map-vlink { cursor:pointer; }
-/* Lets a single cable be traced by eye in a busy diagram just by
-   hovering it -- see mapSetHoverEdge, which also raises the hovered
-   group to the front of the SVG's paint order. A CSS rule like this
-   beats the element's own stroke="..." attribute regardless of order,
-   since presentation attributes sit below author stylesheets in the
-   cascade, so no !important is needed here. */
+/* Highlights the hovered cable. */
 .map-edge.map-line-hover .map-edge-line { stroke:var(--blue-strong); stroke-width:3; }
 .map-vlink.map-line-hover .map-vlink-line { stroke:var(--blue-strong); stroke-width:2.4; }
 .map-popover { position:absolute; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-lg); padding:10px 12px; font-size:12px; max-width:260px; z-index:30; }
@@ -230,9 +211,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
 .map-legend-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
 .map-node-hidden { opacity:0.55; }
 
-/* Dark mode -- auto: the browser/OS prefers dark and the user hasn't
-   explicitly forced light via the toggle (data-theme="light" is set by
-   app.js when they do, see THEME_KEY in app.js). */
+/* Dark mode: applied when the OS/browser prefers it and there is no explicit override. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
@@ -266,8 +245,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
     --tag-teal-bg: #042f2e;     --tag-teal-text: #5eead4;
   }
 }
-/* Dark mode -- manual override: the toggle button sets this explicitly
-   (persisted in localStorage), regardless of the OS/browser preference. */
+/* Dark mode: explicit override set via the toggle button. */
 :root[data-theme="dark"] {
   --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
   --blue: #60a5fa; --danger: #f87171;
@@ -300,9 +278,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
   --tag-teal-bg: #042f2e;     --tag-teal-text: #5eead4;
 }
 
-/* Theme toggle button -- see app.js initThemeToggle()/toggleTheme(). A
-   small icon button placed in the topbar's account-box next to the
-   other account actions. */
+/* Theme toggle button. */
 .theme-toggle { font-size:16px; line-height:1; padding:6px 10px; }
 .theme-toggle .theme-icon-dark { display:none; }
 @media (prefers-color-scheme: dark) {
@@ -312,8 +288,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
 :root[data-theme="dark"] .theme-toggle .theme-icon-light { display:none; }
 :root[data-theme="dark"] .theme-toggle .theme-icon-dark { display:inline; }
 
-/* Printing (see "Print" button on a device's card). Hidden on screen;
-   @media print below reveals this and strips non-paper UI. */
+/* Print-only metadata, hidden on screen. */
 .print-meta { display:none; }
 
 @media print {
@@ -329,10 +304,7 @@ table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
   table { font-size:12px; }
   th, td { border-bottom-color:#cbd5e1; }
   tr, .path-hop { break-inside:avoid; }
-  /* Map tab: printMap() points #mapSvg's viewBox at the full diagram's
-     bounds (independent of whatever's panned/zoomed on screen) right
-     before window.print() -- let it render at that full size instead of
-     the on-screen fixed-height, clipped canvas. */
+  /* Map tab: renders at full size when printing, not the clipped on-screen view. */
   .map-canvas-wrap { overflow:visible !important; border:none; background:none; }
   #mapSvg { width:100% !important; height:auto !important; }
 }

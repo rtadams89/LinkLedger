@@ -23,7 +23,8 @@ physically and logically connected.
 ## What's inside
 
 - **Backend:** Python + FastAPI + SQLite file.
-- **Frontend:** plain HTML/CSS/JS.
+- **Frontend:** plain HTML/CSS/JS, with a light/dark theme that follows
+  your OS/browser preference (and a toggle to override it).
 
 The Dockerfile itself is straightforward (standard `python:3.12-slim` + pip
 install + uvicorn); if you hit anything odd on first boot, please open an
@@ -61,8 +62,11 @@ yet. New MACs show up on the Discovery tab, identified by MAC and (when
 DHCP has it) DNS name and IP — IP/DNS are only ever shown there, never
 stored. You pick which interfaces/VLANs to pull from per pfSense instance
 (so a guest VLAN can be excluded, for example), and each pending device is
-either ignored, used to create a new device, or linked to an existing
-port's MAC. Because pfSense itself has no built-in REST API, this requires
+either ignored (restorable later from the Discovery tab), used to create a
+new device, or linked to an existing port's MAC — picking a device by its
+discovered DNS name or MAC also pre-fills the matching device/port for you
+when there's an unambiguous match. The search bar matches MAC addresses
+too. Because pfSense itself has no built-in REST API, this requires
 installing the third-party **[pfSense-pkg-RESTAPI](https://pfrest.org/)**
 package on each pfSense box first — it's not in the normal System >
 Package Manager list; install it from a shell (SSH, or Diagnostics >

@@ -39,8 +39,9 @@
   </div>
 
   <h2>Finding a device</h2>
-  <p>Type into the search bar at the top — it matches device name, role, or
-  model as you type. Click a result to open that device's detail view,
+  <p>Type into the search bar at the top — it matches device name, role,
+  model, or a port's MAC address (4+ hex characters, with or without
+  colons) as you type. Click a result to open that device's detail view,
   which lists every port and what it's connected to. Viewing a device
   switches to its own <strong>Device</strong> tab, separate from Browse
   devices -- Browse devices always shows the full grid, and the Device tab
@@ -191,12 +192,14 @@
   <p>Once set up, LinkLedger polls each enabled instance on its own
   interval automatically (you can also click <strong>Sync now</strong> any
   time, in Settings or on the Discovery tab itself). For each pending
-  device, you can <strong>Ignore</strong> it (it won't reappear unless
-  pfSense sees new activity for it later), <strong>Create device</strong>
-  (a new device + port, with that MAC already set and the Site pre-filled
-  from the instance), or <strong>Link to port</strong> (just set the MAC
-  on one of an existing device's ports). A MAC that's already on a port
-  never shows up as a pending candidate again.</p>
+  device, you can <strong>Ignore</strong> it (click <strong>View
+  ignored</strong> to find and <strong>Restore</strong> it back to pending
+  later), <strong>Create device</strong> (a new device + port, with that
+  MAC already set and the Site pre-filled from the instance), or
+  <strong>Link to port</strong> (sets the MAC on an existing device's
+  port -- if its DNS name matches a device name exactly, or the device has
+  only one port, both the device and port are pre-selected for you). A MAC
+  that's already on a port never shows up as a pending candidate again.</p>
 
   <h2>AP Groups and Virtual Switches</h2>
   <p>Some connections don't have one fixed cable end to point at: a laptop
@@ -297,10 +300,11 @@
   Internet device is excluded from the site and model checks -- it's a
   documentation-only stand-in for "the public internet," not a real piece
   of hardware, so it was never going to have those set); site values in
-  use that aren't in your managed Sites list; ports missing a speed (patch
-  panel pass-through ports, the Internet device's ports, and wireless/
-  virtual member links are excluded, since none of those have a speed of
-  their own to set); ports with no cable, pairing, or wireless/virtual
+  use that aren't in your managed Sites list; ports missing a speed, or
+  missing a MAC address (same exclusions for both: patch panel pass-through
+  ports, the Internet device's ports, and wireless/virtual member links,
+  since none of those have a speed or hardware MAC of their own); ports
+  with no cable, pairing, or wireless/virtual
   link at all; AP Groups / Virtual Switches with no uplinks defined (these
   can never actually reach the rest of the network); devices with no
   ports yet (AP Groups and Virtual Switches are excluded here too -- they
@@ -387,6 +391,12 @@
   it -- it reappears on every admin login until the password is actually
   changed. See the README's "Setting up accounts" section for the default
   password and how the viewer account's password works.</p>
+
+  <h2>Dark mode</h2>
+  <p>LinkLedger follows your OS/browser's light or dark preference
+  automatically. The &#127769;/&#9728;&#65039; button (top right on every
+  page) overrides that for your browser and sticks until you click it
+  again -- it's remembered even after you sign out.</p>
 
   <h2>Logging out</h2>
   <p><strong>Log out</strong> (top right, next to "Signed in as...") ends

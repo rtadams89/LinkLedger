@@ -1,29 +1,20 @@
-"""Find the physical/logical path between two devices.
+"""Finds the physical/logical path between two devices.
 
 Graph model, rebuilt from the DB on every query:
 
-- Every port is a graph node.
-- A cable between two ports is an edge, carrying the ports' speeds.
-- A "pair" link (patch panel front/rear, or any manually paired ports) is
-  an edge between those two specific ports.
-- A Switch or Router/Firewall device bridges all of its own ports to
-  each other. Any other device role does not.
-- An AP Group / Virtual Switch device (db.VIRTUAL_SWITCH_ROLES) has no
-  physical ports of its own. It gets one synthetic graph node, bridged
-  to its uplinks (real ports elsewhere that keep their own cable too)
-  and its members (ports whose only connection is to it). A search can
-  pin to one specific uplink via uplink_a_id/uplink_b_id -- see
-  find_path().
+- Every port is a node; a cable or pair link (patch panel front/rear, or
+  any manually paired ports) is an edge.
+- A Switch or Router/Firewall device bridges all of its own ports
+  together.
+- An AP Group / Virtual Switch device has no physical ports of its own;
+  it gets one synthetic node, bridged to its uplinks and members.
 
-VLANs are a search constraint, not a graph edge removal. If the two NICs
-are on explicitly tagged VLANs that don't overlap, the path must pass
-through at least one Router/Firewall device; otherwise a plain shortest
-path is used. A port's own VLAN tag takes priority over one inferred by
-tracing outward.
+VLANs are a search constraint, not a graph edge removal: if the two NICs
+are on non-overlapping tagged VLANs, the path must pass through a
+Router/Firewall device.
 
-"start" is any port of device A and "end" is any port of device B when
-a specific port isn't given; the search picks whichever ports give the
-shortest valid path.
+When a specific port isn't given, "start"/"end" is any port of that
+device, and the search picks whichever port gives the shortest path.
 """
 
 from collections import defaultdict, deque
@@ -32,21 +23,17 @@ from . import crud, db
 
 
 def _vs_node(virtual_switch_id: int) -> str:
-    """Synthetic graph node key for a virtual switch device (a string,
-    distinct from real port ids which are ints)."""
+    """Synthetic node key for a virtual switch device (a string, unlike
+    int port ids)."""
     return f"vs:{virtual_switch_id}"
 
 
 def _build_graph(conn, forced_uplinks=None, exclude_vs_ids=None):
-    """forced_uplinks: optional {virtual_switch_device_id: uplink_port_id}.
-    When a virtual switch's id is present, only its forced uplink port
-    gets an edge to/from the synthetic node, instead of every uplink it
-    has.
+    """forced_uplinks: optional {virtual_switch_device_id: uplink_port_id},
+    limiting that virtual switch to one uplink edge.
 
     exclude_vs_ids: optional set of virtual_switch_device_id values to omit
-    entirely from the graph -- no uplink or member edges are added, so the
-    synthetic node doesn't exist. See the "split" handling in
-    find_path()."""
+    entirely from the graph."""
     forced_uplinks = forced_uplinks or {}
     exclude_vs_ids = exclude_vs_ids or set()
     port_rows = conn.execute(
@@ -162,16 +149,13 @@ def find_path(conn, device_a_id: int, device_b_id: int,
     either falls back to any port on that device.
 
     uplink_a_id/uplink_b_id pin the search to one uplink of a virtual
-    switch the corresponding NIC is a member of, instead of letting BFS
-    pick whichever uplink gives the shortest route. Raises ConflictError
-    if the named NIC isn't such a member, or the uplink doesn't belong to
+    switch the corresponding NIC is a member of. Raises ConflictError if
+    the named NIC isn't such a member, or the uplink doesn't belong to
     that virtual switch.
 
     If uplink_a_id and uplink_b_id name two different uplinks of the same
-    virtual switch, the search instead finds the real backbone path
-    between those two uplinks, bypassing the shared switch's trivial
-    two-hop shortcut. If no such backbone path exists, "not found" is
-    returned."""
+    virtual switch, the search finds the backbone path between those two
+    uplinks instead."""
     device_a = crud.get_device(conn, device_a_id)
     device_b = crud.get_device(conn, device_b_id)
     if device_a_id == device_b_id:
@@ -203,10 +187,10 @@ def find_path(conn, device_a_id: int, device_b_id: int,
                 "reason": f"{device_b['name']} has no ports yet"}
 
     def _resolve_pin(label, chosen_port_id, uplink_id):
-        """Returns (vs_id, uplink_port_id) for a valid pin, or None if
-        uplink_id wasn't given. Raises ConflictError if the chosen NIC
-        isn't a virtual-switch member, or the uplink doesn't belong to
-        that virtual switch."""
+        """Returns (vs_id, uplink_port_id), or None if uplink_id wasn't
+        given. Raises ConflictError if the chosen NIC isn't a
+        virtual-switch member, or the uplink doesn't belong to that
+        virtual switch."""
         if uplink_id is None:
             return None
         p = ports.get(chosen_port_id) if chosen_port_id is not None else None
@@ -226,10 +210,7 @@ def find_path(conn, device_a_id: int, device_b_id: int,
     pin_a = _resolve_pin(device_a["name"], port_a_id, uplink_a_id)
     pin_b = _resolve_pin(device_b["name"], port_b_id, uplink_b_id)
 
-    # Split: both sides pinned to different uplinks of the same virtual
-    # switch. Handled by the `split` branch below: each side's member->AP
-    # hop is known, and only the backbone between the two uplinks needs a
-    # search.
+    # Both sides pinned to different uplinks of the same virtual switch.
     split = None
     forced_uplinks = {}
     if pin_a and pin_b and pin_a[0] == pin_b[0] and pin_a[1] != pin_b[1]:
@@ -239,21 +220,22 @@ def find_path(conn, device_a_id: int, device_b_id: int,
             if pin:
                 forced_uplinks[pin[0]] = pin[1]
 
-    # VLANs carried by the chosen NIC(s), used for the note below and to
-    # decide whether a Router/Firewall hop is required.
-    vlans_a = _effective_vlan_set(conn, ports, start_ports)
-    vlans_b = _effective_vlan_set(conn, ports, end_ports)
-    require_router = bool(vlans_a) and bool(vlans_b) and not (vlans_a & vlans_b)
+    # VLANs across every candidate NIC on each side -- used only to decide
+    # up front whether a router-free path could possibly work. Once a path
+    # is actually found below, vlan_note is recomputed from the specific
+    # ports it ends up using, not this candidate-wide union (a device with
+    # several NICs on different VLANs could otherwise get a "same VLAN"
+    # note that isn't true of the two ports the path actually picked).
+    candidate_vlans_a = _effective_vlan_set(conn, ports, start_ports)
+    candidate_vlans_b = _effective_vlan_set(conn, ports, end_ports)
+    require_router = bool(candidate_vlans_a) and bool(candidate_vlans_b) and not (candidate_vlans_a & candidate_vlans_b)
 
     port_path = None
     combined_prev = None
     edges_into = None  # (edge_type, speed) aligned 1:1 with port_path; index 0 is always None
 
     if split:
-        # The member->AP hop on each side is known; only the backbone
-        # between the two uplinks needs a search, on a graph that excludes
-        # the shared vs_node to avoid the trivial two-hop shortcut through
-        # it.
+        # Backbone search between the two uplinks, excluding the shared vs_node.
         vs_id, uplink_a_port, uplink_b_port = split
         _, _, _, excluded_adj = _build_graph(conn, exclude_vs_ids={vs_id})
         dist_mid, prev_mid = _bfs_dist(excluded_adj, [uplink_a_port])
@@ -286,9 +268,7 @@ def find_path(conn, device_a_id: int, device_b_id: int,
                 port_path = _walk_to_root(prev_s, best_end)
                 combined_prev = prev_s
         else:
-            # A Switch alone can't bridge two different VLANs; the path
-            # must pass through a Router/Firewall device. Find the router
-            # port minimizing (distance from start) + (distance from end).
+            # Find the router port minimizing (distance from start) + (distance from end).
             router_ports = [
                 pid for dev_id, pids in by_device.items()
                 if devices.get(dev_id, {}).get("role") == "Router/Firewall"
@@ -352,6 +332,11 @@ def find_path(conn, device_a_id: int, device_b_id: int,
     all_speeds = [ports[n]["speed"] for n in port_path if not isinstance(n, str) and ports[n]["speed"]]
     overall_speed = min(all_speeds, key=lambda s: crud.SPEED_MBPS.get(s, 0)) if all_speeds else None
 
+    # port_path's first/last entries are always the concrete start/end ports
+    # the search actually picked (never a virtual-switch node), so the VLAN
+    # note reflects those two specific ports rather than every candidate NIC.
+    vlans_a = _effective_vlan_set(conn, ports, [port_path[0]])
+    vlans_b = _effective_vlan_set(conn, ports, [port_path[-1]])
     common = vlans_a & vlans_b
     if vlans_a and vlans_b:
         if common:

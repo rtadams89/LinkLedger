@@ -1,7 +1,6 @@
 """CSV export/import for devices, ports, cables, sites, and the
 enabled-roles/enabled-speeds/enabled-reports picker settings, plus the
-Backup/Restore zip bundle built on top of all seven (see
-build_backup_zip / restore_backup_zip at the bottom of this file).
+Backup/Restore zip bundle built on top of all seven.
 
 The CSVs reference devices/ports by name rather than database id.
 
@@ -22,20 +21,12 @@ from datetime import datetime, timezone
 
 from . import crud, db
 
-# The original 6 columns are what a devices CSV is *detected* by (see
-# _SCHEMAS below), so older exports/backups without the Map columns still
-# import fine. The 4 Map columns are written on export and read on import
-# when present, but default sensibly (see _import_devices) when absent.
+# A devices CSV is detected by DEVICE_CORE_COLUMNS; DEVICE_MAP_COLUMNS are optional.
 DEVICE_CORE_COLUMNS = ["name", "role", "model", "site", "notes", "poe_required"]
 DEVICE_MAP_COLUMNS = ["pos_x", "pos_y", "ports_per_row", "show_on_map", "port_layout_mode"]
 DEVICE_COLUMNS = DEVICE_CORE_COLUMNS + DEVICE_MAP_COLUMNS
-# grid_row/grid_col are only meaningful while the owning device's
-# port_layout_mode is 'custom' (see DEVICE_MAP_COLUMNS above), but are
-# always exported/restored so switching a device back to custom later
-# doesn't lose previously-placed positions. mac_address is likewise always
-# written/read when present but absent from _SCHEMAS' detection set below,
-# so an older ports export (from before this column existed) still
-# imports fine -- every port just comes back with no MAC.
+# grid_row/grid_col apply only when port_layout_mode is 'custom'. mac_address
+# is optional on import/export.
 PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with",
                 "wireless_link", "uplink_for", "lag", "grid_row", "grid_col", "mac_address"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
@@ -212,10 +203,20 @@ def _export_reports(conn) -> bytes:
 # Import
 # ---------------------------------------------------------------------------
 
+_EXACT_MATCH_KINDS = {"sites", "roles", "speeds", "reports"}  # single-column kinds
+
+
 def _detect_kind(header_fields):
     header_set = {f.strip() for f in (header_fields or []) if f and f.strip()}
     for kind, schema in _SCHEMAS.items():
-        if schema <= header_set:  # every required column present; extra columns tolerated
+        if kind in _EXACT_MATCH_KINDS:
+            # A lone "name"/"role"/"speed"/"report" column is ambiguous as a
+            # *subset* check -- it'd also match any header that happens to
+            # carry that column alongside unrelated ones. Require the header
+            # to be exactly that one column.
+            if schema == header_set:
+                return kind
+        elif schema <= header_set:  # every required column present; extra columns tolerated
             return kind
     return None
 
@@ -279,20 +280,16 @@ def _import_devices(conn, rows):
     if errors:
         _raise_validation(errors)
 
-    # Cascading deletes clear ports/cables once their devices are gone.
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
     for row in rows:
         role = (row.get("role") or "").strip()
-        # show_on_map may be absent entirely (an export from before the Map
-        # feature) -- fall back to the same role-based default create_device
-        # uses, rather than forcing every restored device to visible.
+        # Falls back to the role-based default when show_on_map is absent.
         show_on_map_cell = row.get("show_on_map")
         show_on_map = (_yesno(show_on_map_cell) if show_on_map_cell not in (None, "")
                        else role not in db.MAP_HIDDEN_BY_DEFAULT_ROLES)
-        # Absent (older export) or unrecognized -> 'auto', same as a brand
-        # new device.
+        # Defaults to 'auto' when absent or unrecognized.
         port_layout_mode = (row.get("port_layout_mode") or "").strip().lower()
         if port_layout_mode not in ("auto", "custom"):
             port_layout_mode = "auto"
@@ -345,13 +342,26 @@ def _import_ports(conn, rows):
         else:
             mac_cells[mac] = i
 
+    pair_edges = {}  # (device_name, port_name) -> the port name it's paired with
     for i, row in enumerate(rows, start=2):
         dname = (row.get("device_name") or "").strip()
+        pname = (row.get("port_name") or "").strip()
         pair_with = (row.get("pair_with") or "").strip()
         wireless_link = (row.get("wireless_link") or "").strip()
         uplink_for = (row.get("uplink_for") or "").strip()
         if pair_with and (dname, pair_with) not in port_keys:
             errors.append(f"row {i}: pair_with '{pair_with}' not found on device '{dname}'")
+        elif pair_with == pname:
+            errors.append(f"row {i}: port '{pname}' can't be paired with itself")
+        elif pair_with:
+            key_a, key_b = (dname, pname), (dname, pair_with)
+            if key_a in pair_edges and pair_edges[key_a] != pair_with:
+                errors.append(f"row {i}: port '{pname}' is already paired with '{pair_edges[key_a]}' from another row")
+            elif key_b in pair_edges and pair_edges[key_b] != pname:
+                errors.append(f"row {i}: port '{pair_with}' is already paired with '{pair_edges[key_b]}' from another row")
+            else:
+                pair_edges[key_a] = pair_with
+                pair_edges[key_b] = pname
         if wireless_link and pair_with:
             errors.append(f"row {i}: a port can't have both pair_with and wireless_link")
         for label, name in (("wireless_link", wireless_link), ("uplink_for", uplink_for)):
@@ -365,8 +375,7 @@ def _import_ports(conn, rows):
     if errors:
         _raise_validation(errors)
 
-    # Replacing ports clears cables (they'd point at gone ports) and LAGs
-    # (repopulated below from this same CSV's `lag` column).
+    # Replacing ports clears cables and LAGs; LAGs are repopulated below from the `lag` column.
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM lags")
@@ -459,8 +468,7 @@ def _import_cables(conn, rows):
 
 
 def _import_sites(conn, rows):
-    """Replaces the whole managed Sites list. Does not touch any device's
-    own site value."""
+    """Replaces the whole managed Sites list."""
     errors = []
     names = set()
     for i, row in enumerate(rows, start=2):
@@ -480,8 +488,7 @@ def _import_sites(conn, rows):
 
 
 def _import_roles(conn, rows):
-    """Replaces the enabled-roles picker setting. Doesn't touch any
-    device's own role value."""
+    """Replaces the enabled-roles picker setting."""
     errors = []
     roles = []
     for i, row in enumerate(rows, start=2):
@@ -499,8 +506,7 @@ def _import_roles(conn, rows):
 
 
 def _import_speeds(conn, rows):
-    """Replaces the enabled-speeds picker setting. Doesn't touch any
-    port's own speed value."""
+    """Replaces the enabled-speeds picker setting."""
     errors = []
     speeds = []
     for i, row in enumerate(rows, start=2):
@@ -518,8 +524,7 @@ def _import_speeds(conn, rows):
 
 
 def _import_reports(conn, rows):
-    """Replaces the Reports-tab visibility setting. Doesn't touch the
-    underlying report data."""
+    """Replaces the Reports-tab visibility setting."""
     errors = []
     reports = []
     for i, row in enumerate(rows, start=2):
@@ -565,12 +570,12 @@ def build_backup_zip(conn, version: str) -> tuple[bytes, str]:
 
 
 def restore_backup_zip(conn, data: bytes) -> dict:
-    """Restores a Backup .zip (see build_backup_zip), or any zip containing
-    one or more of devices.csv/ports.csv/cables.csv/sites.csv/roles.csv/
-    speeds.csv/reports.csv (detected by column header, not filename).
-    Applies devices/ports/cables in that order, then sites/roles/speeds/
-    reports. Non-CSV members and unrecognized CSVs are ignored. Raises
-    ConflictError if nothing usable is found or any CSV fails validation."""
+    """Restores a Backup .zip, or any zip containing one or more of
+    devices.csv/ports.csv/cables.csv/sites.csv/roles.csv/speeds.csv/
+    reports.csv (detected by column header, not filename). Applies
+    devices/ports/cables in that order, then sites/roles/speeds/reports.
+    Non-CSV members and unrecognized CSVs are ignored. Raises ConflictError
+    if nothing usable is found or any CSV fails validation."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:

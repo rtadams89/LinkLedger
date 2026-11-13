@@ -19,14 +19,14 @@ SPEED_MBPS = {
     "5G": 5000, "10G": 10000, "25G": 25000, "40G": 40000, "100G": 100000,
 }
 
-# Reports-tab checks and their display titles/order, keyed the same as
-# data_quality_report's return dict below.
+# Reports-tab checks and their display titles, in display order.
 REPORT_DEFS = [
     ("missing_site", "Devices missing a site"),
     ("missing_model", "Devices missing a model"),
     ("missing_role", "Devices missing a role"),
     ("unmanaged_site_values", "Site values not in your managed list"),
     ("missing_speed", "Ports missing a speed"),
+    ("missing_mac", "Ports missing a MAC address"),
     ("unused_ports", "Unused ports"),
     ("no_uplinks", "AP Groups / Virtual Switches with no uplinks"),
     ("no_ports", "Devices with no ports"),
@@ -52,10 +52,16 @@ class NotFoundError(Exception):
 def list_devices(conn, q: str | None = None):
     if q:
         like = f"%{q.lower()}%"
+        # A query with 4+ hex digits also matches against port MAC addresses
+        # (e.g. "aabb" or "AA:BB").
+        mac_digits = re.sub(r"[^0-9a-fA-F]", "", q)
+        mac_like = f"%{mac_digits.upper()}%" if len(mac_digits) >= 4 else ""
         rows = conn.execute(
-            "SELECT * FROM devices WHERE lower(name) LIKE ? OR lower(role) LIKE ? "
-            "OR lower(model) LIKE ? ORDER BY name",
-            (like, like, like),
+            "SELECT DISTINCT devices.* FROM devices LEFT JOIN ports ON ports.device_id = devices.id "
+            "WHERE lower(devices.name) LIKE ? OR lower(devices.role) LIKE ? OR lower(devices.model) LIKE ? "
+            "OR (? != '' AND replace(ports.mac_address, ':', '') LIKE ?) "
+            "ORDER BY devices.name",
+            (like, like, like, mac_like, mac_like),
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM devices ORDER BY name").fetchall()
@@ -75,9 +81,8 @@ def create_device(conn, name: str, role: str = "", model: str = "", site: str = 
     if not name:
         raise ConflictError("device name is required")
     role = role.strip()
-    # Certain roles (Client, Appliance -- see db.MAP_HIDDEN_BY_DEFAULT_ROLES)
-    # clutter the Map by default; everything else starts visible. An
-    # explicit True/False always wins over that default.
+    # Roles in db.MAP_HIDDEN_BY_DEFAULT_ROLES default to hidden; an explicit
+    # show_on_map always wins.
     if show_on_map is None:
         show_on_map = role not in db.MAP_HIDDEN_BY_DEFAULT_ROLES
     try:
@@ -104,8 +109,7 @@ def update_device(conn, device_id: int, **fields):
         elif k in ("poe_required", "show_on_map"):
             updates[k] = int(bool(v))
         elif k == "ports_per_row":
-            # 0 clears it back to a single row (NULL); the map layout wrap
-            # otherwise has to be a positive number of positions.
+            # 0 clears it back to a single row (NULL).
             if v < 0:
                 raise ConflictError("ports per row can't be negative")
             updates[k] = None if v == 0 else int(v)
@@ -126,18 +130,15 @@ def set_device_position(conn, device_id: int, x: float, y: float):
 
 
 # ---------------------------------------------------------------------------
-# Free-form port layout -- a device-level, per-port grid position used by
-# the Map tab instead of the sequential ports_per_row wrap (see
-# db.devices.port_layout_mode / db.ports.grid_row,grid_col). Edited via the
-# "Edit port layout" screen on the device page.
+# Free-form port layout: a device-level, per-port grid position used by
+# the Map tab.
 # ---------------------------------------------------------------------------
 
 def _position_groups(conn, device_id: int):
-    """Groups a device's ports into the same "positions" the Map tab draws
-    one jack per: a Patch Panel's front/rear pair collapses into one
-    position since it's the same physical jack; every other device gets
-    one position per port. Ordered by each group's lowest port id (same
-    order as mapDevicePositions in app.js -- keep the two in sync)."""
+    """Groups a device's ports into the positions the Map tab draws one
+    jack per: a Patch Panel's front/rear pair collapses into one position;
+    every other device gets one position per port. Ordered by each
+    group's lowest port id."""
     device = get_device(conn, device_id)
     ports = list_ports(conn, device_id)
     if device["role"] == "Patch Panel":
@@ -162,15 +163,12 @@ def _position_groups(conn, device_id: int):
 
 def set_port_layout_mode(conn, device_id: int, mode: str):
     """Switches a device between 'auto' (ports wrap into rows of
-    ports_per_row, as always) and 'custom' (each position renders at its
-    own stored grid_row/grid_col -- see set_port_grid_positions).
+    ports_per_row) and 'custom' (each position uses its own stored
+    grid_row/grid_col).
 
-    Switching into 'custom' seeds a starting position for any position
-    group that doesn't have one yet, mirroring the device's current
-    ports_per_row wrap -- so the editor opens from something familiar
-    instead of a blank grid. A group that already has a saved position
-    (e.g. re-entering custom mode after switching back to auto) is left
-    alone."""
+    Switching into 'custom' seeds a starting position, mirroring the
+    device's ports_per_row wrap, for any position group that doesn't
+    already have one."""
     device = get_device(conn, device_id)
     if mode not in ("auto", "custom"):
         raise ConflictError("port layout mode must be 'auto' or 'custom'")
@@ -189,12 +187,10 @@ def set_port_layout_mode(conn, device_id: int, mode: str):
 
 
 def set_port_grid_positions(conn, device_id: int, positions: list[dict]):
-    """Bulk-sets free-form grid positions for this device's ports -- the
-    port-layout editor's Save action. `positions` is a list of
-    {port_id, grid_row, grid_col}. Every port referenced must belong to
-    this device. Two different positions (jacks) can't share one cell,
-    but a Patch Panel's own front/rear pair legitimately does, since
-    that's one physical jack rendered once."""
+    """Bulk-sets free-form grid positions for this device's ports.
+    `positions` is a list of {port_id, grid_row, grid_col}. Every port
+    referenced must belong to this device. Two different positions can't
+    share one cell, except a Patch Panel's own front/rear pair."""
     get_device(conn, device_id)
     own_ports = list_ports(conn, device_id)
     own_port_ids = {p["id"] for p in own_ports}
@@ -235,8 +231,7 @@ def delete_device(conn, device_id: int):
 
 def get_topology(conn):
     """Everything the Map tab needs in one call: every device with its own
-    ports/LAGs/uplinks/members, plus every cable (same shape as
-    list_cables())."""
+    ports/LAGs/uplinks/members, plus every cable."""
     devices = list_devices(conn)
     for d in devices:
         d["ports"] = list_ports(conn, d["id"])
@@ -290,7 +285,6 @@ def delete_site(conn, site_id: int):
     if not row:
         raise NotFoundError(f"site {site_id} not found")
     conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
-    # devices.site values already set to this value are left untouched.
 
 
 # ---------------------------------------------------------------------------
@@ -332,9 +326,8 @@ def create_ports_bulk(conn, device_id: int, names: list[str], speed: str = "", p
 
 
 def create_patch_panel_ports(conn, device_id: int, count: int, start: int = 1):
-    """Creates `count` front/rear port pairs for a patch panel, pre-paired
-    so traces pass through them. `start` sets the first pair number, so
-    more pairs can be added later without colliding with existing ones."""
+    """Creates `count` front/rear port pairs for a patch panel, pre-paired.
+    `start` sets the first pair number."""
     get_device(conn, device_id)
     created = []
     for i in range(start, start + count):
@@ -369,7 +362,7 @@ def update_port(conn, port_id: int, name: str | None = None, speed: str | None =
                  mac_address: str | None = None):
     """Partial update -- only fields that are not None are changed. An
     empty string for mac_address clears it; a non-empty value is
-    normalized/validated (see normalize_mac) and checked for uniqueness."""
+    normalized and checked for uniqueness."""
     get_port(conn, port_id)
     updates = {}
     if name is not None:
@@ -602,8 +595,7 @@ def remove_uplink(conn, uplink_id: int):
 
 
 def list_members(conn, virtual_switch_id: int):
-    """Ports that join this virtual switch as their only connection -- the
-    read-only flip side of list_uplinks."""
+    """Ports that join this virtual switch as their only connection."""
     _require_virtual_switch(conn, virtual_switch_id)
     rows = conn.execute(
         "SELECT p.id AS port_id, p.name AS port_name, p.vlans AS vlans, "
@@ -1024,6 +1016,13 @@ def data_quality_report(conn):
         and p["device_role"] not in ("Patch Panel", "Internet")
     ]
 
+    # Ports with no MAC recorded, same exclusions as missing_speed.
+    missing_mac = [
+        p for p in all_ports
+        if not p["mac_address"] and not p["virtual_switch_id"]
+        and p["device_role"] not in ("Patch Panel", "Internet")
+    ]
+
     # Unused: no cable, no pairing, no virtual-switch link.
     unused_ports = [
         p for p in all_ports
@@ -1080,6 +1079,7 @@ def data_quality_report(conn):
         "missing_role": missing_role,
         "unmanaged_site_values": unmanaged_site_values,
         "missing_speed": missing_speed,
+        "missing_mac": missing_mac,
         "unused_ports": unused_ports,
         "no_uplinks": no_uplinks,
         "no_ports": no_ports,
@@ -1089,9 +1089,8 @@ def data_quality_report(conn):
 
 
 # ---------------------------------------------------------------------------
-# pfSense instances -- device-discovery sources. See app/pfsense.py for the
-# actual HTTP client; this module just persists instance config + the
-# discovered-device staging list and orchestrates a sync.
+# pfSense instances: device-discovery sources. Persists instance config
+# and the discovered-device staging list, and orchestrates syncs.
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
@@ -1125,10 +1124,9 @@ def get_pfsense_instance(conn, instance_id: int, mask=True):
 
 
 def _get_pfsense_instance_raw(conn, instance_id: int):
-    """Internal: returns the row with the real api_key and
-    selected_interfaces still JSON-encoded, for actually talking to the
-    instance (app.pfsense expects it in that form). list_pfsense_instances
-    / get_pfsense_instance mask the key and decode interfaces for display."""
+    """Internal: returns the row with the real api_key, and
+    selected_interfaces still JSON-encoded (list_pfsense_instances /
+    get_pfsense_instance mask the key and decode interfaces)."""
     row = conn.execute("SELECT * FROM pfsense_instances WHERE id = ?", (instance_id,)).fetchone()
     if not row:
         raise NotFoundError(f"pfSense instance {instance_id} not found")
@@ -1144,11 +1142,14 @@ def create_pfsense_instance(conn, name: str, site: str = "", base_url: str = "",
     base_url = base_url.strip()
     if not base_url:
         raise ConflictError("a base URL is required")
+    poll_minutes = int(poll_minutes)
+    if poll_minutes < 1:
+        raise ConflictError("poll interval must be at least 1 minute")
     cur = conn.execute(
         "INSERT INTO pfsense_instances (name, site, base_url, api_key, verify_tls, enabled, poll_minutes) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (name, site.strip(), base_url, api_key.strip(), int(bool(verify_tls)), int(bool(enabled)),
-         max(int(poll_minutes), 1)),
+         poll_minutes),
     )
     return get_pfsense_instance(conn, cur.lastrowid)
 
@@ -1157,8 +1158,7 @@ def update_pfsense_instance(conn, instance_id: int, **fields):
     """Partial update. Recognized keys: name, site, base_url, api_key,
     verify_tls, enabled, selected_interfaces (list[str]), poll_minutes.
     Only keys actually passed (and not None) are changed; api_key is only
-    overwritten when a non-empty value is given, so the masked value a
-    GET returns can't accidentally get written back as the real key."""
+    overwritten when a non-empty value is given."""
     get_pfsense_instance(conn, instance_id)
     updates = {}
     if fields.get("name") is not None:
@@ -1182,7 +1182,10 @@ def update_pfsense_instance(conn, instance_id: int, **fields):
     if fields.get("selected_interfaces") is not None:
         updates["selected_interfaces"] = json.dumps(list(fields["selected_interfaces"]))
     if fields.get("poll_minutes") is not None:
-        updates["poll_minutes"] = max(int(fields["poll_minutes"]), 1)
+        poll_minutes = int(fields["poll_minutes"])
+        if poll_minutes < 1:
+            raise ConflictError("poll interval must be at least 1 minute")
+        updates["poll_minutes"] = poll_minutes
     if not updates:
         return get_pfsense_instance(conn, instance_id)
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -1207,11 +1210,9 @@ def list_pfsense_interfaces(conn, instance_id: int):
 
 
 def sync_pfsense_instance(conn, instance_id: int):
-    """Pulls ARP/DHCP data for one instance and upserts discovered_devices,
-    skipping any MAC already claimed by a real port. Used by both the
-    manual "Sync now" button and the background poller. Raises
-    pfsense.PfsenseError on failure (last_sync_status is recorded either
-    way, so a failed sync is still visible in the Settings UI)."""
+    """Pulls ARP/DHCP data and upserts discovered_devices, skipping MACs
+    already claimed by a real port. Used by "Sync now" and the poller.
+    Raises pfsense.PfsenseError on failure (status is recorded either way)."""
     instance = _get_pfsense_instance_raw(conn, instance_id)
     now = _now_iso()
     try:
@@ -1229,8 +1230,7 @@ def sync_pfsense_instance(conn, instance_id: int):
     for item in seen:
         mac = item["mac"]
         if mac in claimed:
-            # Already a real port's MAC -- clear out any stale pending row
-            # left over from before it was imported/linked.
+            # Already a real port's MAC -- remove any stale pending row for it.
             conn.execute("DELETE FROM discovered_devices WHERE mac_address = ? AND status = 'pending'", (mac,))
             continue
         existing = conn.execute(
@@ -1254,16 +1254,8 @@ def sync_pfsense_instance(conn, instance_id: int):
     cold_selected = [s for s in selected if s not in hit_ifaces]
     status = f"ok ({len(seen)} matched)" if cold_selected else "ok"
     if cold_selected:
-        # At least one selected interface got zero hits this sync. That's
-        # the normal, boring case once an interface has genuinely gone
-        # quiet -- but it's also exactly what a selected-vs-actual
-        # interface-identifier mismatch looks like (see
-        # pfsense.describe_arp_interfaces' docstring -- a VLAN's *own*
-        # description differing from its *assigned interface's*
-        # description is the usual culprit), so surface the raw ARP data
-        # right in the Settings UI's sync-status line rather than only in
-        # server logs. Best-effort: never let this diagnosis turn a real
-        # "ok" into a reported failure.
+        # A selected interface got zero hits. This diagnosis is best-effort
+        # and never turns a real "ok" into a failure.
         try:
             diag = pfsense.describe_arp_interfaces(instance)
             if not diag["total"]:
@@ -1277,8 +1269,8 @@ def sync_pfsense_instance(conn, instance_id: int):
                     f"{status} -- no ARP activity translated to: {', '.join(cold_selected)}; "
                     f"other interface value(s) pfSense's ARP table reports: {', '.join(unselected) or '(none)'}"
                 )
-        except pfsense.PfsenseError:
-            pass
+        except Exception as e:
+            log.warning(f"pfSense ARP-interface diagnostic failed for instance {instance_id}: {e}")
     conn.execute(
         "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = ? WHERE id = ?",
         (now, status, instance_id),
@@ -1288,8 +1280,8 @@ def sync_pfsense_instance(conn, instance_id: int):
 def sync_due_pfsense_instances(conn):
     """Syncs every enabled instance whose own poll_minutes interval has
     elapsed since its last_sync_at (or that's never been synced yet).
-    Used by the background poller (see main.py); a failure on one
-    instance is logged and does not stop the rest."""
+    Used by the background poller; a failure on one instance is logged
+    and does not stop the rest."""
     rows = conn.execute("SELECT * FROM pfsense_instances WHERE enabled = 1").fetchall()
     now = datetime.now(timezone.utc)
     for row in rows:
@@ -1342,13 +1334,21 @@ def ignore_discovered(conn, discovered_id: int):
     return get_discovered_device(conn, discovered_id)
 
 
+def restore_discovered(conn, discovered_id: int):
+    """Un-ignores a discovered device, putting it back in the pending list."""
+    disc = get_discovered_device(conn, discovered_id)
+    if disc["status"] != "ignored":
+        raise ConflictError("this discovered device isn't ignored")
+    conn.execute("UPDATE discovered_devices SET status = 'pending' WHERE id = ?", (discovered_id,))
+    return get_discovered_device(conn, discovered_id)
+
+
 def import_discovered(conn, discovered_id: int, name: str, role: str = "", model: str = "",
                        site: str | None = None, notes: str = ""):
     """Creates a new device + a single port named "eth0", pre-filling
     site from the discovered device's own pfSense instance when the
     caller doesn't override it, and sets that port's MAC to the
-    discovered MAC. IP/DNS name are not carried over -- LinkLedger
-    doesn't track L3."""
+    discovered MAC."""
     disc = get_discovered_device(conn, discovered_id)
     if disc["status"] != "pending":
         raise ConflictError("this discovered device has already been resolved")

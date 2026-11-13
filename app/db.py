@@ -8,8 +8,7 @@ from contextlib import contextmanager
 
 log = logging.getLogger("linkledger")
 
-# Old default database path; init_db() migrates a database found here to
-# DB_PATH automatically.
+# Migrated to DB_PATH by init_db().
 _LEGACY_DB_PATH = "/data/patchbook.db"
 
 DB_PATH = os.environ.get("LINKLEDGER_DB") or os.environ.get("PATCHBOOK_DB") or "/data/linkledger.db"
@@ -56,29 +55,21 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
--- A user-managed picklist for devices.site, built up from the Settings
--- page. Just what the "Site" dropdown offers, not a foreign key
--- constraint -- devices.site stays a free-text column.
+-- Picklist for devices.site; not a foreign key.
 CREATE TABLE IF NOT EXISTS sites (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
     name  TEXT NOT NULL UNIQUE
 );
 
--- A "virtual switch" (role AP Group or Virtual Switch) is a device with no
--- physical ports of its own. It bridges together its uplinks (real ports
--- elsewhere that keep their own cable too) and its members (ports whose
--- only connection is this virtual switch, tracked via
--- ports.virtual_switch_id, see the migration below).
+-- Uplinks for a virtual switch (AP Group / Virtual Switch); members are
+-- tracked via ports.virtual_switch_id.
 CREATE TABLE IF NOT EXISTS virtual_switch_uplinks (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     virtual_switch_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     port_id             INTEGER NOT NULL UNIQUE REFERENCES ports(id) ON DELETE CASCADE
 );
 
--- A LAG (link aggregation group) bonds two or more of a device's own
--- physical ports into one logical link. Each member port keeps its own
--- individual port record and cable; membership is tracked via
--- ports.lag_id, see the migration below.
+-- LAG member ports are tracked via ports.lag_id.
 CREATE TABLE IF NOT EXISTS lags (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -86,13 +77,7 @@ CREATE TABLE IF NOT EXISTS lags (
     UNIQUE(device_id, name)
 );
 
--- One row per pfSense box LinkLedger polls for ARP/DHCP data (via the
--- third-party pfSense-pkg-API package -- pfSense itself has no native
--- REST API). A real list rather than a single meta-blob setting because a
--- household/homelab can have more than one site, each with its own
--- pfSense instance. `site` is free-text, matching the devices.site
--- convention (no FK) -- used to pre-fill a discovered device's Site field
--- on import and to group/filter the Discovery view.
+-- One row per pfSense instance polled for ARP/DHCP data.
 CREATE TABLE IF NOT EXISTS pfsense_instances (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     name                 TEXT NOT NULL,
@@ -107,12 +92,7 @@ CREATE TABLE IF NOT EXISTS pfsense_instances (
     last_sync_status     TEXT NOT NULL DEFAULT ''
 );
 
--- Staging list of MACs seen in a pfSense instance's ARP/DHCP data that
--- aren't already claimed by a port (see idx_ports_mac above). Refreshed
--- on every sync rather than accumulated forever -- see
--- crud.sync_pfsense_instance. IP/DNS name here are transient, sourced
--- live from pfSense's own DHCP leases -- LinkLedger does not otherwise
--- track L3 anywhere.
+-- MACs seen in pfSense ARP/DHCP data that aren't already claimed by a port.
 CREATE TABLE IF NOT EXISTS discovered_devices (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     mac_address         TEXT NOT NULL UNIQUE,
@@ -126,8 +106,7 @@ CREATE TABLE IF NOT EXISTS discovered_devices (
 );
 """
 
-# The fixed set of device roles the app supports. A device's role is just
-# a free-text string in the database; nothing enforces it.
+# Device roles offered in the UI.
 ROLES = [
     "Switch", "Patch Panel", "Router/Firewall", "Hypervisor", "NAS",
     "Client", "Server", "Access Point", "Appliance", "AP Group",
@@ -140,16 +119,10 @@ VLAN_POE_CAPABLE_ROLES = ["Switch", "Router/Firewall"]
 # Roles that bridge all of their own ports together.
 BRIDGING_ROLES = ["Switch", "Router/Firewall", "AP Group", "Virtual Switch"]
 
-# Roles with no physical ports of their own; they bridge their uplinks and
-# members instead. See virtual_switch_uplinks above and
-# ports.virtual_switch_id below.
+# Roles with no physical ports of their own.
 VIRTUAL_SWITCH_ROLES = ["AP Group", "Virtual Switch"]
 
-# Roles hidden from the Map tab by default (still toggleable per device,
-# see devices.show_on_map) because there tend to be a lot of them and
-# they clutter the diagram: personal client devices, small smart-home/IoT
-# appliances, and general-purpose servers (VMs, containers, etc. tend to
-# pile up fast and rarely need to appear on the physical topology view).
+# Roles hidden from the Map tab by default.
 MAP_HIDDEN_BY_DEFAULT_ROLES = ["Client", "Appliance", "Server"]
 
 
@@ -166,6 +139,9 @@ def session():
     try:
         yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -198,23 +174,14 @@ def _migrate(conn):
         # NULL means not part of a LAG.
         conn.execute("ALTER TABLE ports ADD COLUMN lag_id INTEGER")
     if "grid_row" not in cols:
-        # Free-form port-layout grid position, only meaningful while the
-        # owning device's port_layout_mode is 'custom' (see below) -- NULL
-        # until the device is switched into custom mode or a new port is
-        # added to a device that's already in it (see crud.set_port_layout_mode
-        # / crud._next_custom_grid_slot for how a NULL position gets a
-        # sensible fallback at render/edit time).
+        # Only meaningful when port_layout_mode is 'custom'.
         conn.execute("ALTER TABLE ports ADD COLUMN grid_row INTEGER")
     if "grid_col" not in cols:
         conn.execute("ALTER TABLE ports ADD COLUMN grid_col INTEGER")
     if "mac_address" not in cols:
-        # NULL means unknown/not recorded. Normalized to uppercase
-        # colon-separated form by crud.set_port_mac. Layer 2 only --
-        # LinkLedger deliberately does not track IP/L3 anywhere.
+        # NULL means unknown. Normalized to uppercase colon-separated form.
         conn.execute("ALTER TABLE ports ADD COLUMN mac_address TEXT")
-    # Partial unique index so two ports can't claim the same MAC, while
-    # any number of NULLs (unknown) is fine. Re-run every migration --
-    # CREATE ... IF NOT EXISTS is a no-op once it's there.
+    # Allows any number of NULLs; non-NULL values must be unique.
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_ports_mac "
         "ON ports(mac_address) WHERE mac_address IS NOT NULL"
@@ -232,31 +199,24 @@ def _migrate(conn):
         # NULL means all ports/positions in a single row.
         conn.execute("ALTER TABLE devices ADD COLUMN ports_per_row INTEGER")
     if "port_layout_mode" not in device_cols:
-        # 'auto' wraps ports into rows of ports_per_row, same as always.
-        # 'custom' instead renders each port/pair at its own stored
-        # ports.grid_row/grid_col -- a free-form grid edited per device
-        # (see crud.set_port_layout_mode / set_port_grid_positions).
+        # 'auto' wraps ports into rows of ports_per_row; 'custom' uses each
+        # port's stored grid_row/grid_col.
         conn.execute("ALTER TABLE devices ADD COLUMN port_layout_mode TEXT NOT NULL DEFAULT 'auto'")
     if "show_on_map" not in device_cols:
-        # Whether this device is drawn on the Map tab. Defaults to visible,
-        # except we immediately hide any existing Client devices below --
-        # new devices get the same role-based default from crud.create_device.
+        # Whether this device is drawn on the Map tab.
         conn.execute("ALTER TABLE devices ADD COLUMN show_on_map INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Client'")
-    # Appliance (smart-home/IoT) devices joined the default-hidden set
-    # after the column above already existed for some installs, so this
-    # gets its own one-time backfill (via the meta table) instead of
-    # folding into the show_on_map column-add branch, which only ever
-    # runs once, at column-creation time.
-    if conn.execute("SELECT 1 FROM meta WHERE key = 'map_hide_appliance_backfill'").fetchone() is None:
-        conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Appliance'")
-        conn.execute("INSERT INTO meta (key, value) VALUES ('map_hide_appliance_backfill', '1')")
-    # Same deal for Server -- joined the default-hidden set later still,
-    # so it gets its own one-time backfill rather than retroactively
-    # changing what the Appliance backfill above already did.
-    if conn.execute("SELECT 1 FROM meta WHERE key = 'map_hide_server_backfill'").fetchone() is None:
-        conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = 'Server'")
-        conn.execute("INSERT INTO meta (key, value) VALUES ('map_hide_server_backfill', '1')")
+    # One-time backfill, per role in MAP_HIDDEN_BY_DEFAULT_ROLES: hide
+    # existing devices of that role from the map. 'Client' is skipped here
+    # since it was already covered above when the show_on_map column itself
+    # was created. Any role added to that list later picks up its own
+    # catch-up backfill automatically instead of needing a new hardcoded block.
+    for role in MAP_HIDDEN_BY_DEFAULT_ROLES:
+        if role == "Client":
+            continue
+        meta_key = f"map_hide_{role.lower().replace(' ', '_')}_backfill"
+        if conn.execute("SELECT 1 FROM meta WHERE key = ?", (meta_key,)).fetchone() is None:
+            conn.execute("UPDATE devices SET show_on_map = 0 WHERE role = ?", (role,))
+            conn.execute("INSERT INTO meta (key, value) VALUES (?, '1')", (meta_key,))
 
-    # Renamed "Workstation" role to "Client".
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")
