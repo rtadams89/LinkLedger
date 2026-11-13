@@ -2574,7 +2574,7 @@ function discoveryRow(r) {
     <td>${esc(r.last_seen)}</td>
     <td class="row-actions">
       <button class="btn small" onclick="openImportDiscoveredModal(${r.id})">Create device</button>
-      <button class="btn small" onclick="openLinkDiscoveredModal(${r.id})">Link to port</button>
+      <button class="btn small" onclick='openLinkDiscoveredModal(${r.id}, ${JSON.stringify(r.dns_name || "").replace(/'/g, "&#39;")})'>Link to port</button>
       <button class="btn small danger" onclick="ignoreDiscovered(${r.id})">Ignore</button>
     </td>
   </tr>`;
@@ -2655,7 +2655,7 @@ async function submitImportDiscovered(discoveredId) {
 }
 
 // --- Link a discovered MAC to an existing port ---
-async function openLinkDiscoveredModal(discoveredId) {
+async function openLinkDiscoveredModal(discoveredId, dnsName) {
   renderModal(`
     <h3>Link discovered MAC to an existing port</h3>
     <div id="linkDiscoveredError"></div>
@@ -2671,6 +2671,38 @@ async function openLinkDiscoveredModal(discoveredId) {
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitLinkDiscovered(${discoveredId})">Link</button>
     </div>`);
+  // Best-effort head start from the pfSense-reported DNS name: pre-fill
+  // the search either way, and if it's confident enough to guess a single
+  // device, select it outright (which in turn auto-fills the Port dropdown
+  // -- and if that device has only one port, the browser's own "select
+  // the lone option" behavior means the whole modal is a single click).
+  if (dnsName) await prefillLinkDiscoveredDevice(dnsName);
+}
+
+async function prefillLinkDiscoveredDevice(dnsName) {
+  document.getElementById("dl_deviceSearch").value = dnsName;
+  const matches = await api(`/api/devices?q=${encodeURIComponent(dnsName)}`);
+  if (!matches.length) return;  // no candidates -- leave the name typed in for the user to search/tweak
+  // Prefer an exact (case-insensitive) name match over "there's only one
+  // substring match", since a DNS name like "nas1" matching a device
+  // named "NAS1" is a much stronger signal than an incidental single hit
+  // on a fuzzier query.
+  const exact = matches.filter(d => d.name.toLowerCase() === dnsName.toLowerCase());
+  const confidentMatch = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
+  if (confidentMatch) {
+    await selectLinkDiscoveredDevice(confidentMatch.id, confidentMatch.name);
+  } else {
+    // Multiple plausible candidates -- show them rather than guess wrong.
+    renderLinkDiscoveredResults(matches);
+  }
+}
+
+function renderLinkDiscoveredResults(matches) {
+  const box = document.getElementById("dl_deviceResults");
+  box.innerHTML = matches.length
+    ? matches.map(d => `<div class="result-item" onclick='selectLinkDiscoveredDevice(${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
+    : `<div class="result-item">No matches</div>`;
+  box.classList.add("show");
 }
 
 async function onLinkDiscoveredDeviceSearch() {
@@ -2678,10 +2710,7 @@ async function onLinkDiscoveredDeviceSearch() {
   const box = document.getElementById("dl_deviceResults");
   if (!q) { box.classList.remove("show"); return; }
   const matches = await api(`/api/devices?q=${encodeURIComponent(q)}`);
-  box.innerHTML = matches.length
-    ? matches.map(d => `<div class="result-item" onclick='selectLinkDiscoveredDevice(${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
-    : `<div class="result-item">No matches</div>`;
-  box.classList.add("show");
+  renderLinkDiscoveredResults(matches);
 }
 
 async function selectLinkDiscoveredDevice(id, name) {
