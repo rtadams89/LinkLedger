@@ -130,13 +130,9 @@ def _static_mappings(instance: dict, name_map: dict, selected: set) -> list[dict
     """DHCP static reservations on the selected interfaces, regardless of
     whether the device is currently active in ARP. Each returned mapping is
     tagged with "source": "static_reservation" so callers can tell it apart
-    from a live ARP sighting. Returns [] if the pfSense-pkg-RESTAPI version
-    on this instance doesn't support the endpoint, rather than failing the
-    whole sync over a bonus feature."""
-    try:
-        data = _get(instance, "/api/v2/services/dhcp_server/static_mappings")
-    except PfsenseError:
-        return []
+    from a live ARP sighting. Raises PfsenseError on failure -- the caller
+    decides whether that should fail the whole sync or just be noted."""
+    data = _get(instance, "/api/v2/services/dhcp_server/static_mappings")
     rows = data.get("data", data) if isinstance(data, dict) else data
     out = []
     for row in rows or []:
@@ -156,15 +152,19 @@ def _static_mappings(instance: dict, name_map: dict, selected: set) -> list[dict
     return out
 
 
-def fetch_arp_and_leases(instance: dict) -> list[dict]:
-    """Returns [{"mac", "interface", "ip", "dns_name", "source"}] for
-    instance["selected_interfaces"]; an empty selection returns [].
+def fetch_arp_and_leases(instance: dict) -> tuple[list[dict], str | None]:
+    """Returns ([{"mac", "interface", "ip", "dns_name", "source"}], warning)
+    for instance["selected_interfaces"]; an empty selection returns ([], None).
     "source" is "arp" for a live ARP sighting, or "static_reservation" for a
     DHCP static mapping whose device wasn't actually seen in ARP (e.g. it's
-    currently offline)."""
+    currently offline). `warning` is set if the static-mappings lookup
+    itself failed (e.g. the pfSense-pkg-RESTAPI version is too old, or the
+    API key's user lacks that one privilege) -- ARP-based discovery still
+    succeeds either way, but the caller should let the user know static
+    reservations weren't actually checked this sync."""
     selected = set(json.loads(instance.get("selected_interfaces") or "[]"))
     if not selected:
-        return []
+        return [], None
 
     name_map = _interface_name_map(instance)
 
@@ -197,9 +197,16 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
             "source": "arp",
         })
 
+    static_warning = None
+    try:
+        static_mappings = _static_mappings(instance, name_map, selected)
+    except PfsenseError as e:
+        static_mappings = []
+        static_warning = f"couldn't check DHCP static reservations: {e}"
+
     seen_macs = {item["mac"] for item in out}
-    for item in _static_mappings(instance, name_map, selected):
+    for item in static_mappings:
         if item["mac"] not in seen_macs:
             out.append(item)
             seen_macs.add(item["mac"])
-    return out
+    return out, static_warning

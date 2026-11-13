@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import crud, csvio, db, pathfind, pfsense
 
-VERSION = "1.10.6"
+VERSION = "1.10.7"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -663,7 +663,10 @@ def api_sync_discovery(instance_id: Optional[int] = None):
     if instance_id is not None:
         handle(crud.sync_pfsense_instance, instance_id)
     else:
-        handle(crud.sync_due_pfsense_instances)
+        # A manual "Sync now" click should actually sync right now, not
+        # skip an instance just because the background poller already
+        # synced it recently -- that's sync_due_pfsense_instances' job.
+        handle(crud.sync_all_pfsense_instances)
     return {"ok": True}
 
 

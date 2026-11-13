@@ -1216,7 +1216,7 @@ def sync_pfsense_instance(conn, instance_id: int):
     instance = _get_pfsense_instance_raw(conn, instance_id)
     now = _now_iso()
     try:
-        seen = pfsense.fetch_arp_and_leases(instance)
+        seen, static_warning = pfsense.fetch_arp_and_leases(instance)
     except pfsense.PfsenseError as e:
         conn.execute(
             "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = ? WHERE id = ?",
@@ -1272,6 +1272,8 @@ def sync_pfsense_instance(conn, instance_id: int):
                 )
         except Exception as e:
             log.warning(f"pfSense ARP-interface diagnostic failed for instance {instance_id}: {e}")
+    if static_warning:
+        status = f"{status} -- {static_warning}"
     conn.execute(
         "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = ? WHERE id = ?",
         (now, status, instance_id),
@@ -1295,6 +1297,21 @@ def sync_due_pfsense_instances(conn):
                 due = True
         if not due:
             continue
+        try:
+            sync_pfsense_instance(conn, row["id"])
+        except pfsense.PfsenseError as e:
+            log.warning(f"pfSense sync failed for instance {row['id']} ({row['name']}): {e}")
+
+
+def sync_all_pfsense_instances(conn):
+    """Force-syncs every enabled instance right now, ignoring each one's own
+    poll_minutes due-check. Used by the Discovery page's "Sync now" button --
+    sync_due_pfsense_instances (used by the background poller) skips an
+    instance that was already synced recently, which is correct for a
+    poller tick but means nothing when a person just clicked "Sync now" and
+    expects it to actually happen immediately."""
+    rows = conn.execute("SELECT id, name FROM pfsense_instances WHERE enabled = 1").fetchall()
+    for row in rows:
         try:
             sync_pfsense_instance(conn, row["id"])
         except pfsense.PfsenseError as e:
