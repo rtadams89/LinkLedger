@@ -1249,9 +1249,31 @@ def sync_pfsense_instance(conn, instance_id: int):
                 " first_seen, last_seen, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
                 (mac, instance_id, item["interface"], item["dns_name"], item["ip"], now, now),
             )
+    status = "ok"
+    if not seen:
+        # Zero matches is the normal "nothing new" case once this has been
+        # running a while, but the first sync after picking interfaces is
+        # also where a selected-vs-actual interface-identifier mismatch
+        # shows up (see pfsense.describe_arp_interfaces' docstring -- VLAN
+        # sub-interfaces are the usual culprit). Best-effort diagnosis,
+        # surfaced right in the Settings UI's sync-status line rather than
+        # only in server logs; never let it turn a real "ok" into a
+        # reported failure.
+        try:
+            diag = pfsense.describe_arp_interfaces(instance)
+            selected = sorted(json.loads(instance.get("selected_interfaces") or "[]"))
+            if diag["total"] and diag["interfaces"]:
+                status = (
+                    f"ok (0 matched -- {diag['total']} ARP entries seen on interface(s) "
+                    f"{', '.join(diag['interfaces'])}; you have {', '.join(selected) or '(none)'} selected)"
+                )
+            elif not diag["total"]:
+                status = "ok (0 matched -- pfSense's ARP table is currently empty)"
+        except pfsense.PfsenseError:
+            pass
     conn.execute(
-        "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = 'ok' WHERE id = ?",
-        (now, instance_id),
+        "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = ? WHERE id = ?",
+        (now, status, instance_id),
     )
 
 

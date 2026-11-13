@@ -92,6 +92,31 @@ def list_interfaces(instance: dict) -> list[dict]:
     return out
 
 
+def describe_arp_interfaces(instance: dict) -> dict:
+    """Diagnostic-only helper: fetches the ARP table and reports how many
+    rows it has and which interface identifiers actually appear on them --
+    completely ignoring instance["selected_interfaces"]. Used by
+    crud.sync_pfsense_instance to build a useful last_sync_status message
+    when a sync matches zero devices, since the most common cause is a
+    mismatch between the identifier the user picked in Settings (from
+    list_interfaces(), e.g. "igb0.100") and what the ARP table actually
+    reports for that traffic -- notably, pfSense's ARP table does not
+    appear to break out VLAN sub-interfaces: tagged traffic commonly shows
+    up tagged with the parent physical interface (e.g. "igb0") rather than
+    the VLAN sub-interface identifier, so an ARP-table-only mismatch for a
+    VLAN selection is the single most likely cause of a zero-match sync.
+    Best-effort: callers should treat a PfsenseError here as "couldn't get
+    a diagnosis" and fall back to a plain "ok", not as a sync failure."""
+    arp_data = _get(instance, "/api/v2/diagnostics/arp_table")
+    arp_rows = arp_data.get("data", arp_data) if isinstance(arp_data, dict) else arp_data
+    seen = set()
+    for row in arp_rows or []:
+        iface = row.get("interface") or row.get("if") or ""
+        if iface:
+            seen.add(iface)
+    return {"total": len(arp_rows or []), "interfaces": sorted(seen)}
+
+
 def fetch_arp_and_leases(instance: dict) -> list[dict]:
     """Returns [{"mac": "AA:BB:...", "interface": "igb0.100", "ip": "...",
     "dns_name": "..."}], filtered to instance["selected_interfaces"] (a
