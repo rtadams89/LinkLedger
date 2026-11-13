@@ -94,35 +94,64 @@ def list_interfaces(instance: dict) -> list[dict]:
 
 def _interface_name_map(instance: dict) -> dict:
     """Maps every representation pfSense might use to identify an
-    interface -- the raw ifname (e.g. "lagg0.10") and, confirmed against
-    a real instance, the interface's own *description* (e.g.
-    "10_WORKSTATIONS") -- to the canonical raw ifname that
-    instance["selected_interfaces"] stores (the same value list_interfaces()
-    offers as a checkbox's value). pfSense's `represent_interfaces_as`
-    REST API setting controls which representation shows up in the ARP
-    table / DHCP leases ("if" raw name, "descr" friendly description, or
-    "id" wan/lan/optN); this map makes the sync match regardless of that
-    setting, instead of assuming it's "if" like the raw ifname is.
-    Best-effort: a PfsenseError fetching interfaces here just means the
-    map comes back empty, so callers fall back to comparing raw strings
-    (today's behavior) rather than failing the whole sync."""
+    interface -- the raw ifname (e.g. "lagg0.10"), the *assigned
+    interface's* own description (e.g. "OPT1 (Workstations)", from
+    /api/v2/interfaces), and -- confirmed against a real instance to be
+    the actual gap -- a VLAN's *own* separate description (e.g.
+    "10_WORKSTATIONS", from /api/v2/interface/vlans, RESTAPI\\Models\\
+    InterfaceVLAN: if/tag/descr/vlanif) -- to the canonical raw ifname
+    that instance["selected_interfaces"] stores (the same value
+    list_interfaces() offers as a checkbox's value).
+
+    These are two genuinely independent, independently-settable fields on
+    two separate pfSense models (an assigned interface's own descr vs.
+    the VLAN object's own descr for the VLAN it was created from), not
+    one shared value -- a user can (and, in the field, does) name a VLAN
+    "10_WORKSTATIONS" under Interfaces > VLANs while its interface
+    assignment under Interfaces > Assignments keeps a different
+    descr/no custom descr. pfSense's own ARP table reports the VLAN's own
+    description for tagged traffic, so both sources are merged here
+    rather than relying on just /api/v2/interfaces.
+
+    Best-effort throughout: a PfsenseError fetching either endpoint just
+    means that source contributes nothing to the map (the VLANs endpoint
+    in particular may not exist on older package versions, or there may
+    simply be no VLANs configured), rather than failing the whole sync."""
+    name_map: dict[str, str] = {}
     try:
         data = _get(instance, "/api/v2/interfaces")
+        rows = data.get("data", data) if isinstance(data, dict) else data
+        for row in rows or []:
+            raw = row.get("if") or row.get("name") or ""
+            if not raw:
+                continue
+            name_map[raw] = raw
+            descr = row.get("descr") or row.get("description") or ""
+            if descr:
+                name_map[descr] = raw
+            ident = row.get("id") or ""
+            if ident:
+                name_map[ident] = raw
     except PfsenseError:
-        return {}
-    rows = data.get("data", data) if isinstance(data, dict) else data
-    name_map = {}
-    for row in rows or []:
-        raw = row.get("if") or row.get("name") or ""
-        if not raw:
-            continue
-        name_map[raw] = raw
-        descr = row.get("descr") or row.get("description") or ""
-        if descr:
-            name_map[descr] = raw
-        ident = row.get("id") or ""
-        if ident:
-            name_map[ident] = raw
+        pass
+    try:
+        vlan_data = _get(instance, "/api/v2/interface/vlans")
+        vlan_rows = vlan_data.get("data", vlan_data) if isinstance(vlan_data, dict) else vlan_data
+        for row in vlan_rows or []:
+            # vlanif is the VLAN's own real interface identifier (e.g.
+            # "lagg0.10", auto-populated by pfSense from if+tag) -- use it
+            # directly as the canonical target rather than requiring it to
+            # also appear in /api/v2/interfaces, so this still works even
+            # for a VLAN that was never assigned to an OPT slot.
+            vlanif = row.get("vlanif") or ""
+            if not vlanif:
+                continue
+            name_map.setdefault(vlanif, vlanif)
+            descr = row.get("descr") or row.get("description") or ""
+            if descr:
+                name_map[descr] = vlanif
+    except PfsenseError:
+        pass
     return name_map
 
 
