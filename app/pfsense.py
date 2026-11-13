@@ -92,28 +92,60 @@ def list_interfaces(instance: dict) -> list[dict]:
     return out
 
 
+def _interface_name_map(instance: dict) -> dict:
+    """Maps every representation pfSense might use to identify an
+    interface -- the raw ifname (e.g. "lagg0.10") and, confirmed against
+    a real instance, the interface's own *description* (e.g.
+    "10_WORKSTATIONS") -- to the canonical raw ifname that
+    instance["selected_interfaces"] stores (the same value list_interfaces()
+    offers as a checkbox's value). pfSense's `represent_interfaces_as`
+    REST API setting controls which representation shows up in the ARP
+    table / DHCP leases ("if" raw name, "descr" friendly description, or
+    "id" wan/lan/optN); this map makes the sync match regardless of that
+    setting, instead of assuming it's "if" like the raw ifname is.
+    Best-effort: a PfsenseError fetching interfaces here just means the
+    map comes back empty, so callers fall back to comparing raw strings
+    (today's behavior) rather than failing the whole sync."""
+    try:
+        data = _get(instance, "/api/v2/interfaces")
+    except PfsenseError:
+        return {}
+    rows = data.get("data", data) if isinstance(data, dict) else data
+    name_map = {}
+    for row in rows or []:
+        raw = row.get("if") or row.get("name") or ""
+        if not raw:
+            continue
+        name_map[raw] = raw
+        descr = row.get("descr") or row.get("description") or ""
+        if descr:
+            name_map[descr] = raw
+        ident = row.get("id") or ""
+        if ident:
+            name_map[ident] = raw
+    return name_map
+
+
 def describe_arp_interfaces(instance: dict) -> dict:
     """Diagnostic-only helper: fetches the ARP table and reports how many
-    rows it has and which interface identifiers actually appear on them --
-    completely ignoring instance["selected_interfaces"]. Used by
+    rows it has and which interface identifiers actually appear on them,
+    translated through _interface_name_map() the same way
+    fetch_arp_and_leases() does -- completely ignoring
+    instance["selected_interfaces"] itself. Used by
     crud.sync_pfsense_instance to build a useful last_sync_status message
-    when a sync matches zero devices, since the most common cause is a
-    mismatch between the identifier the user picked in Settings (from
-    list_interfaces(), e.g. "igb0.100") and what the ARP table actually
-    reports for that traffic -- notably, pfSense's ARP table does not
-    appear to break out VLAN sub-interfaces: tagged traffic commonly shows
-    up tagged with the parent physical interface (e.g. "igb0") rather than
-    the VLAN sub-interface identifier, so an ARP-table-only mismatch for a
-    VLAN selection is the single most likely cause of a zero-match sync.
-    Best-effort: callers should treat a PfsenseError here as "couldn't get
-    a diagnosis" and fall back to a plain "ok", not as a sync failure."""
+    when a sync still matches zero devices even after that translation
+    (e.g. a naming scheme the map doesn't cover, or the interface really
+    doesn't have any current ARP traffic). Best-effort: callers should
+    treat a PfsenseError here as "couldn't get a diagnosis" and fall back
+    to a plain "ok", not as a sync failure."""
+    name_map = _interface_name_map(instance)
     arp_data = _get(instance, "/api/v2/diagnostics/arp_table")
     arp_rows = arp_data.get("data", arp_data) if isinstance(arp_data, dict) else arp_data
     seen = set()
     for row in arp_rows or []:
-        iface = row.get("interface") or row.get("if") or ""
-        if iface:
-            seen.add(iface)
+        raw_iface = row.get("interface") or row.get("if") or ""
+        if raw_iface:
+            seen.add(name_map.get(raw_iface, raw_iface))
     return {"total": len(arp_rows or []), "interfaces": sorted(seen)}
 
 
@@ -132,12 +164,23 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
     statically-addressed device with no lease still comes through from
     ARP alone -- using its own resolved hostname field, if any, before
     falling back to the DHCP lease's.
+
+    The ARP table's "interface" field is translated through
+    _interface_name_map() before comparing against selected_interfaces --
+    confirmed against a real instance, pfSense can report that field as
+    the interface's *description* (e.g. "10_WORKSTATIONS") rather than
+    the raw ifname (e.g. "lagg0.10") the Settings picker's checkboxes use,
+    depending on the box's `represent_interfaces_as` REST API setting.
+    Without this translation every row silently fails to match and the
+    sync reports "ok" with zero devices.
     """
     import json as _json
 
     selected = set(_json.loads(instance.get("selected_interfaces") or "[]"))
     if not selected:
         return []
+
+    name_map = _interface_name_map(instance)
 
     arp_data = _get(instance, "/api/v2/diagnostics/arp_table")
     arp_rows = arp_data.get("data", arp_data) if isinstance(arp_data, dict) else arp_data
@@ -152,7 +195,8 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
 
     out = []
     for row in arp_rows or []:
-        iface = row.get("interface") or row.get("if") or ""
+        raw_iface = row.get("interface") or row.get("if") or ""
+        iface = name_map.get(raw_iface, raw_iface)
         if iface not in selected:
             continue
         mac = (row.get("mac_address") or row.get("mac") or "").strip().upper()
