@@ -1131,9 +1131,24 @@ function mapBuildRouteGrid(devices) {
   };
 }
 
-function mapRouteCellOf(grid, x, y) {
+// `rowSign` lets the caller pick which way to round the row when a jack's
+// exact pixel y doesn't land on a grid line (it practically never does):
+// 0 (default) rounds to the NEAREST row, same as before. A nonzero sign
+// instead rounds toward that direction (+1 = down = ceil, -1 = up =
+// floor), so the quantized cell never sits on the wrong side of the exact
+// jack from where the cable is actually headed. Without this, the jack's
+// own row could round to the opposite side by up to half a cell (~7px)
+// regardless of the cable's real direction -- harmless for the A* path
+// itself, but the lead-in/out stub connecting the exact jack pixel back
+// to that row (see mapRouteOrthogonalize) would then have to visibly dip
+// the "wrong" way for an instant before the path can turn back toward
+// its real destination. Two cables sharing one jack (e.g. a patch
+// panel's front/rear pair) but headed opposite directions would both
+// show that same wrong-way dip, looking like neither one picked a side.
+function mapRouteCellOf(grid, x, y, rowSign) {
   const c = Math.round((x - grid.originX) / MAP_ROUTE_CELL);
-  const r = Math.round((y - grid.originY) / MAP_ROUTE_CELL);
+  const rawR = (y - grid.originY) / MAP_ROUTE_CELL;
+  const r = rowSign > 0 ? Math.ceil(rawR) : rowSign < 0 ? Math.floor(rawR) : Math.round(rawR);
   return { r: Math.min(Math.max(r, 0), grid.rows - 1), c: Math.min(Math.max(c, 0), grid.cols - 1) };
 }
 function mapRouteCellXY(grid, r, c) {
@@ -1557,7 +1572,12 @@ function drawMap(opts) {
     const a = mapJackAbs(c.a_port_id) || mapAnchorAbs(c.a_device_id);
     const b = mapJackAbs(c.b_port_id) || mapAnchorAbs(c.b_device_id);
     if (!a || !b) return "";
-    const aCell = mapRouteCellOf(grid, a.x, a.y), bCell = mapRouteCellOf(grid, b.x, b.y);
+    // Round each endpoint's row toward its OWN actual direction (see
+    // mapRouteCellOf) -- from the exact jack pixels, not the as-yet-
+    // unquantized cells, so a tie rounds the same way the exempt bias
+    // below will.
+    const rowSign = a.y === b.y ? 0 : Math.sign(b.y - a.y);
+    const aCell = mapRouteCellOf(grid, a.x, a.y, rowSign), bCell = mapRouteCellOf(grid, b.x, b.y, -rowSign);
     const cellPath = mapRouteCable(grid, aCell, bCell, c.a_device_id, c.b_device_id);
     let points;
     if (cellPath && cellPath.length) {
@@ -1584,7 +1604,8 @@ function drawMap(opts) {
     // mapRouteCable) instead of a raw straight line, so a virtual link
     // doesn't cut through -- and intercept clicks on -- some unrelated
     // device sitting between the member/uplink and the switch.
-    const aCell = mapRouteCellOf(grid, a.x, a.y), bCell = mapRouteCellOf(grid, b.x, b.y);
+    const rowSign = a.y === b.y ? 0 : Math.sign(b.y - a.y);
+    const aCell = mapRouteCellOf(grid, a.x, a.y, rowSign), bCell = mapRouteCellOf(grid, b.x, b.y, -rowSign);
     const cellPath = mapRouteCable(grid, aCell, bCell, vl.device_id, vl.vs_id);
     let points;
     if (cellPath && cellPath.length) {
