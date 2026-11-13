@@ -169,10 +169,19 @@
   that tab, sourced fresh from pfSense each sync.</p>
   <p>This is off until you set it up, since it needs a bit of one-time
   work on the pfSense side first: pfSense itself has no built-in REST API,
-  so install the third-party <strong>pfSense-pkg-API</strong> package
-  (System &gt; Package Manager in the pfSense GUI) and configure an API
-  key for it there. Then, in LinkLedger, go to Settings &rarr; pfSense
-  device discovery, add an instance with that box's URL and API key, click
+  so install the third-party
+  <a href="https://pfrest.org/" target="_blank" rel="noopener">pfSense-pkg-RESTAPI</a>
+  package first. It's <em>not</em> in the normal System &gt; Package
+  Manager list -- install it from a shell (SSH, or Diagnostics &gt;
+  Command Prompt in the pfSense GUI) with
+  <code>pkg-static add &lt;release .pkg URL for your pfSense version&gt;</code>
+  (see its
+  <a href="https://github.com/pfrest/pfSense-pkg-RESTAPI/releases" target="_blank" rel="noopener">releases page</a>
+  for the exact URL to use). Then, in the pfSense GUI, enable it and
+  choose <strong>Key</strong> authentication under System &gt; REST API,
+  and generate a key under System &gt; REST API &gt; Keys. Finally, in
+  LinkLedger, go to Settings &rarr; pfSense device discovery, add an
+  instance with that box's URL and the key you generated, click
   <strong>Test connection</strong>, and pick which interfaces/VLANs to pull
   ARP data from (so you can leave out a guest VLAN, for instance). You can
   add more than one instance if you have more than one site, each

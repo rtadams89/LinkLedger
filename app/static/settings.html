@@ -59,7 +59,7 @@
 
   <div class="card settings-section admin-only">
     <h2>pfSense device discovery</h2>
-    <p class="note">Poll one or more pfSense firewalls for ARP/DHCP data so new devices on your network show up as reviewable candidates on the Discovery tab, identified by MAC address &mdash; LinkLedger never stores IP addresses. Requires the third-party <strong>pfSense-pkg-API</strong> package (pfSense has no built-in REST API): install it from System &gt; Package Manager on each pfSense box and set up an API key in its own settings page there first.</p>
+    <p class="note">Poll one or more pfSense firewalls for ARP/DHCP data so new devices on your network show up as reviewable candidates on the Discovery tab, identified by MAC address &mdash; LinkLedger never stores IP addresses. Requires the third-party <a href="https://pfrest.org/" target="_blank" rel="noopener">pfSense-pkg-RESTAPI</a> package on each pfSense box first (pfSense has no built-in REST API) &mdash; it's not in the normal Package Manager list, install it via <code>pkg-static add</code> from a shell, then enable Key auth and generate a key under System &gt; REST API. See Help for the exact steps.</p>
     <div id="pfsenseError"></div>
     <div id="pfsenseList"></div>
     <button class="btn primary" onclick="openPfsenseEditor(null)" style="margin-top:10px;">Add pfSense instance</button>

@@ -2,17 +2,23 @@
 device-discovery feature (see crud.sync_pfsense_instance).
 
 pfSense itself has no native REST API. Everything here goes through the
-third-party community package **pfSense-pkg-API**
-(https://github.com/jaredhendrickson13/pfsense-api), which the user installs
-on each pfSense box themselves (System > Package Manager) and configures
-with its own auth/API key in that package's settings page in the pfSense
-GUI. LinkLedger just consumes it.
+third-party community package **pfSense-pkg-RESTAPI**
+(https://github.com/pfrest/pfSense-pkg-RESTAPI, docs at https://pfrest.org/
+-- formerly "pfsense-api" under jaredhendrickson13, now moved to its own
+pfrest org/domain), which the user installs on each pfSense box themselves
+(via `pkg-static add <release .pkg URL>`, not the System > Package Manager
+GUI -- see the README/Help for the exact command) and configures under
+System > REST API (enable it, choose Key auth) / System > REST API > Keys
+(generate a key) in the pfSense GUI. LinkLedger just consumes it.
 
 Every pfSense-specific endpoint path / auth header / response shape is
 kept behind the three functions below so it's one place to adjust as we
-test against real instances -- the package's schema has changed across
-its own versions (v1 -> v2), and header naming/response envelopes differ
-slightly between them.
+test against real instances. Confirmed against the v2 API docs
+(https://pfrest.org/AUTHENTICATION_AND_AUTHORIZATION/ and the RESTAPI\\
+Models\\ARPTable / DHCPServerLease / NetworkInterface(s) PHP docs): key
+auth goes in an `X-API-Key` header (raw key, no "Bearer"/"Basic" prefix --
+those are for the separate Basic/JWT auth modes), and the interfaces
+endpoint is `/api/v2/interfaces` (plural).
 
 Uses `requests` (sync) rather than an async client: every route handler in
 app/main.py is a plain sync `def` run in FastAPI's threadpool, so a sync
@@ -39,10 +45,11 @@ class PfsenseError(Exception):
 
 
 def _headers(instance: dict) -> dict:
-    # pfSense-pkg-API's key-auth mode (its default/simplest auth mode).
-    # Confirmed against a real instance once the user has one reachable;
-    # some package versions expect "X-API-Key" instead of "Authorization".
-    return {"Authorization": f"Bearer {instance['api_key']}", "Accept": "application/json"}
+    # pfSense-pkg-RESTAPI's key-auth mode: the raw key goes in an X-API-Key
+    # header, no "Bearer"/"Basic" prefix -- that prefix is only for the
+    # package's separate Basic-auth (local account) and JWT auth modes.
+    # See https://pfrest.org/AUTHENTICATION_AND_AUTHORIZATION/.
+    return {"X-API-Key": instance["api_key"], "Accept": "application/json"}
 
 
 def _get(instance: dict, path: str, params: dict | None = None):
@@ -73,7 +80,7 @@ def test_connection(instance: dict) -> None:
 def list_interfaces(instance: dict) -> list[dict]:
     """Physical interfaces + VLAN sub-interfaces, for the Settings page's
     interface picker. Returns [{"name": "igb0.100", "label": "..."}]."""
-    data = _get(instance, "/api/v2/interface")
+    data = _get(instance, "/api/v2/interfaces")
     rows = data.get("data", data) if isinstance(data, dict) else data
     out = []
     for row in rows or []:
@@ -93,10 +100,13 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
     a freshly-added instance doesn't flood the Discovery view before the
     user picks what they actually want).
 
-    Joined by MAC: the ARP table gives MAC+IP+interface for anything
-    currently on the wire; DHCP leases add a DNS name where one was
-    handed out. A statically-addressed device with no lease still comes
-    through from ARP alone, just without a dns_name.
+    Joined by MAC: the ARP table (RESTAPI\\Models\\ARPTable: mac_address,
+    ip_address, interface, hostname) gives MAC+IP+interface for anything
+    currently on the wire; DHCP leases (RESTAPI\\Models\\DHCPServerLease:
+    mac, ip, hostname, if) add a DNS name where one was handed out. A
+    statically-addressed device with no lease still comes through from
+    ARP alone -- using its own resolved hostname field, if any, before
+    falling back to the DHCP lease's.
     """
     import json as _json
 
@@ -120,14 +130,14 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
         iface = row.get("interface") or row.get("if") or ""
         if iface not in selected:
             continue
-        mac = (row.get("mac") or row.get("mac_addr") or "").strip().upper()
+        mac = (row.get("mac_address") or row.get("mac") or "").strip().upper()
         if not mac:
             continue
         lease = leases_by_mac.get(mac, {})
         out.append({
             "mac": mac,
             "interface": iface,
-            "ip": row.get("ip") or row.get("ip_address") or "",
-            "dns_name": lease.get("hostname") or lease.get("dns_name") or "",
+            "ip": row.get("ip_address") or row.get("ip") or "",
+            "dns_name": row.get("hostname") or lease.get("hostname") or "",
         })
     return out

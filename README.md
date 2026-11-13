@@ -63,10 +63,18 @@ stored. You pick which interfaces/VLANs to pull from per pfSense instance
 (so a guest VLAN can be excluded, for example), and each pending device is
 either ignored, used to create a new device, or linked to an existing
 port's MAC. Because pfSense itself has no built-in REST API, this requires
-installing the third-party **pfSense-pkg-API** package (System > Package
-Manager in the pfSense GUI) and configuring an API key there first; set it
-up per pfSense instance from Settings → pfSense device discovery. Multiple
-pfSense instances are supported, one per site, if you have more than one.
+installing the third-party **[pfSense-pkg-RESTAPI](https://pfrest.org/)**
+package on each pfSense box first — it's not in the normal System >
+Package Manager list; install it from a shell (SSH, or Diagnostics >
+Command Prompt in the pfSense GUI) with
+`pkg-static add <release .pkg URL for your pfSense version>` (see
+[the releases page](https://github.com/pfrest/pfSense-pkg-RESTAPI/releases)
+and [the install guide](https://pfrest.org/INSTALL_AND_CONFIG/) for the
+exact command). Then, in the pfSense GUI, enable it and pick **Key** auth
+under System > REST API, and generate a key under System > REST API >
+Keys. Set it up per pfSense instance from Settings → pfSense device
+discovery. Multiple pfSense instances are supported, one per site, if you
+have more than one.
 
 ## Setting up accounts
 
