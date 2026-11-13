@@ -1,6 +1,7 @@
 """HTTP client for pfSense's ARP table and DHCP leases, via the
 pfSense-pkg-RESTAPI package."""
 
+import json
 import warnings
 
 import requests
@@ -125,12 +126,43 @@ def describe_arp_interfaces(instance: dict) -> dict:
     }
 
 
-def fetch_arp_and_leases(instance: dict) -> list[dict]:
-    """Returns [{"mac", "interface", "ip", "dns_name"}] for
-    instance["selected_interfaces"]; an empty selection returns []."""
-    import json as _json
+def _static_mappings(instance: dict, name_map: dict, selected: set) -> list[dict]:
+    """DHCP static reservations on the selected interfaces, regardless of
+    whether the device is currently active in ARP. Each returned mapping is
+    tagged with "source": "static_reservation" so callers can tell it apart
+    from a live ARP sighting. Returns [] if the pfSense-pkg-RESTAPI version
+    on this instance doesn't support the endpoint, rather than failing the
+    whole sync over a bonus feature."""
+    try:
+        data = _get(instance, "/api/v2/services/dhcp_server/static_mappings")
+    except PfsenseError:
+        return []
+    rows = data.get("data", data) if isinstance(data, dict) else data
+    out = []
+    for row in rows or []:
+        iface = _translate_interface(name_map, row.get("parent_id") or "")
+        if iface not in selected:
+            continue
+        mac = (row.get("mac") or "").strip().upper()
+        if not mac:
+            continue
+        out.append({
+            "mac": mac,
+            "interface": iface,
+            "ip": row.get("ipaddr") or "",
+            "dns_name": row.get("hostname") or row.get("descr") or "",
+            "source": "static_reservation",
+        })
+    return out
 
-    selected = set(_json.loads(instance.get("selected_interfaces") or "[]"))
+
+def fetch_arp_and_leases(instance: dict) -> list[dict]:
+    """Returns [{"mac", "interface", "ip", "dns_name", "source"}] for
+    instance["selected_interfaces"]; an empty selection returns [].
+    "source" is "arp" for a live ARP sighting, or "static_reservation" for a
+    DHCP static mapping whose device wasn't actually seen in ARP (e.g. it's
+    currently offline)."""
+    selected = set(json.loads(instance.get("selected_interfaces") or "[]"))
     if not selected:
         return []
 
@@ -162,5 +194,12 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
             "interface": iface,
             "ip": row.get("ip_address") or row.get("ip") or "",
             "dns_name": row.get("dnsresolve") or lease.get("hostname") or lease.get("descr") or "",
+            "source": "arp",
         })
+
+    seen_macs = {item["mac"] for item in out}
+    for item in _static_mappings(instance, name_map, selected):
+        if item["mac"] not in seen_macs:
+            out.append(item)
+            seen_macs.add(item["mac"])
     return out

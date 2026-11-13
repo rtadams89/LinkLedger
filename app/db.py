@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS discovered_devices (
     ip_address          TEXT NOT NULL DEFAULT '',
     first_seen          TEXT NOT NULL,
     last_seen           TEXT NOT NULL,
-    status              TEXT NOT NULL DEFAULT 'pending'
+    status              TEXT NOT NULL DEFAULT 'pending',
+    source              TEXT NOT NULL DEFAULT 'arp'
 );
 """
 
@@ -241,5 +242,12 @@ def _migrate(conn):
                         (json.dumps(saved),),
                     )
             conn.execute("INSERT INTO meta (key, value) VALUES (?, '1')", (meta_key,))
+
+    discovered_cols = {row["name"] for row in conn.execute("PRAGMA table_info(discovered_devices)").fetchall()}
+    if "source" not in discovered_cols:
+        # 'arp': seen live in pfSense's ARP table. 'static_reservation': only
+        # known via a DHCP static mapping -- the device wasn't actually
+        # active on the network as of the last sync.
+        conn.execute("ALTER TABLE discovered_devices ADD COLUMN source TEXT NOT NULL DEFAULT 'arp'")
 
     conn.execute("UPDATE devices SET role = 'Client' WHERE role = 'Workstation'")

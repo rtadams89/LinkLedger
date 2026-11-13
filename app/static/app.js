@@ -2446,7 +2446,7 @@ async function renderDiscoveryView() {
       ${instances.length === 0 ? `
         <div class="empty-state">No pfSense instances are set up yet. Add one in <a class="link" onclick="window.open('/static/settings.html', '_blank')">Settings</a> to start finding new devices automatically.</div>
       ` : rows.length === 0 ? `
-        <div class="empty-state">${showingIgnored ? "No ignored devices." : "No pending devices right now. New MACs seen in pfSense's ARP/DHCP data on an enabled interface show up here."}</div>
+        <div class="empty-state">${showingIgnored ? "No ignored devices." : "No pending devices right now. New MACs seen in pfSense's ARP table, or known from a DHCP static reservation, on an enabled interface show up here."}</div>
       ` : `
         <div style="overflow-x:auto;">
         <table class="discovery-table"><tr><th>MAC address</th><th>DNS name</th><th>IP</th><th>Interface</th><th>Source</th><th>Last seen</th><th></th></tr>
@@ -2472,7 +2472,9 @@ function discoveryRow(r) {
     <td style="white-space:nowrap;">${esc(r.ip_address || "—")}</td>
     <td style="white-space:nowrap;">${esc(r.interface || "—")}</td>
     <td style="white-space:nowrap;">${esc(r.instance_name)}${r.site ? ` <span class="note">(${esc(r.site)})</span>` : ""}</td>
-    <td style="white-space:nowrap;">${formatTimestamp(r.last_seen)}</td>
+    <td style="white-space:nowrap;">${formatTimestamp(r.last_seen)}${r.source === "static_reservation"
+      ? `<br><span class="note" title="Known from a DHCP static reservation -- not currently seen in pfSense's ARP table">not seen live</span>`
+      : ""}</td>
     <td class="row-actions" style="white-space:nowrap;">${actions}</td>
   </tr>`;
 }

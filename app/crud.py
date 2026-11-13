@@ -1233,21 +1233,22 @@ def sync_pfsense_instance(conn, instance_id: int):
             # Already a real port's MAC -- remove any stale pending row for it.
             conn.execute("DELETE FROM discovered_devices WHERE mac_address = ? AND status = 'pending'", (mac,))
             continue
+        source = item.get("source", "arp")
         existing = conn.execute(
             "SELECT id FROM discovered_devices WHERE mac_address = ?", (mac,)
         ).fetchone()
         if existing:
             conn.execute(
                 "UPDATE discovered_devices SET pfsense_instance_id = ?, interface = ?, "
-                "dns_name = ?, ip_address = ?, last_seen = ? WHERE id = ?",
-                (instance_id, item["interface"], item["dns_name"], item["ip"], now, existing["id"]),
+                "dns_name = ?, ip_address = ?, last_seen = ?, source = ? WHERE id = ?",
+                (instance_id, item["interface"], item["dns_name"], item["ip"], now, source, existing["id"]),
             )
         else:
             conn.execute(
                 "INSERT INTO discovered_devices "
                 "(mac_address, pfsense_instance_id, interface, dns_name, ip_address, "
-                " first_seen, last_seen, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
-                (mac, instance_id, item["interface"], item["dns_name"], item["ip"], now, now),
+                " first_seen, last_seen, status, source) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+                (mac, instance_id, item["interface"], item["dns_name"], item["ip"], now, now, source),
             )
     selected = sorted(json.loads(instance.get("selected_interfaces") or "[]"))
     hit_ifaces = {item["interface"] for item in seen}
