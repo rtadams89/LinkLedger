@@ -151,6 +151,41 @@
   joined to an AP Group / Virtual Switch — tag it with VLAN(s), or (Switch
   / Router-Firewall only) mark it as supplying PoE. VLANs are free text, so
   <code>10</code> or <code>10, 20, 30</code> (for a trunk port) both work.</p>
+  <p>A port can also optionally carry a <strong>MAC address</strong> —
+  layer 2 only; LinkLedger doesn't track IP addresses anywhere. Any format
+  (colons, dashes, dots, or none) is accepted and normalized to
+  <code>AA:BB:CC:DD:EE:FF</code> on save, and a MAC can only be on one port
+  at a time. Besides just documenting it, setting a port's MAC is also how
+  you match it up with a device found by pfSense discovery — see "Device
+  discovery (pfSense)" below.</p>
+
+  <h2>Device discovery (pfSense)</h2>
+  <p>If you'd rather not add every new device by hand, LinkLedger can poll
+  one or more pfSense firewalls for their ARP table and DHCP leases and
+  surface anything it sees that isn't already in LinkLedger (matched by
+  MAC address) as a reviewable candidate on the <strong>Discovery</strong>
+  tab — admins only, hidden otherwise. It never stores an IP address; IP
+  and DNS name (when DHCP has handed one out) are only ever shown live on
+  that tab, sourced fresh from pfSense each sync.</p>
+  <p>This is off until you set it up, since it needs a bit of one-time
+  work on the pfSense side first: pfSense itself has no built-in REST API,
+  so install the third-party <strong>pfSense-pkg-API</strong> package
+  (System &gt; Package Manager in the pfSense GUI) and configure an API
+  key for it there. Then, in LinkLedger, go to Settings &rarr; pfSense
+  device discovery, add an instance with that box's URL and API key, click
+  <strong>Test connection</strong>, and pick which interfaces/VLANs to pull
+  ARP data from (so you can leave out a guest VLAN, for instance). You can
+  add more than one instance if you have more than one site, each
+  optionally tied to one of your managed Sites.</p>
+  <p>Once set up, LinkLedger polls each enabled instance on its own
+  interval automatically (you can also click <strong>Sync now</strong> any
+  time, in Settings or on the Discovery tab itself). For each pending
+  device, you can <strong>Ignore</strong> it (it won't reappear unless
+  pfSense sees new activity for it later), <strong>Create device</strong>
+  (a new device + port, with that MAC already set and the Site pre-filled
+  from the instance), or <strong>Link to port</strong> (just set the MAC
+  on one of an existing device's ports). A MAC that's already on a port
+  never shows up as a pending candidate again.</p>
 
   <h2>AP Groups and Virtual Switches</h2>
   <p>Some connections don't have one fixed cable end to point at: a laptop
@@ -351,9 +386,10 @@
   <h2>Settings</h2>
   <p><strong>Settings</strong> (top right, next to Help) opens a separate
   page with every administrative action in one place: managing Sites,
-  Device roles, and Interface speeds, Backup, Restore, password changes,
-  Clear all connections, and Reset data. A read-only viewer only sees
-  Backup there; everything else needs the admin account.</p>
+  Device roles, Interface speeds, pfSense device discovery, Backup,
+  Restore, password changes, Clear all connections, and Reset data. A
+  read-only viewer only sees Backup there; everything else needs the
+  admin account.</p>
   <p><strong>Sites</strong> manages the list of options the Add/Edit device
   form's Site dropdown offers -- add, rename, or delete a site here. There's
   no fixed built-in list (every homelab's set of physical locations is
@@ -430,11 +466,12 @@
   <ul>
     <li><strong>Devices:</strong> <code>name, role, model, site, notes, poe_required</code></li>
     <li><strong>Ports:</strong> <code>device_name, port_name, speed, vlans, poe_supply, pair_with,
-      wireless_link, uplink_for, lag</code> (<code>pair_with</code> is only for patch-panel front/rear
-      pairing; <code>wireless_link</code>/<code>uplink_for</code> name an AP Group / Virtual Switch
-      device this port is a member of / an uplink for -- see "AP Groups and Virtual Switches" above;
-      <code>lag</code> names the LAG (scoped to that device) this port belongs to, created automatically
-      on import if it doesn't already exist -- see "LAGs" above. All three are blank in older exports,
+      wireless_link, uplink_for, lag, mac_address</code> (<code>pair_with</code> is only for patch-panel
+      front/rear pairing; <code>wireless_link</code>/<code>uplink_for</code> name an AP Group / Virtual
+      Switch device this port is a member of / an uplink for -- see "AP Groups and Virtual Switches"
+      above; <code>lag</code> names the LAG (scoped to that device) this port belongs to, created
+      automatically on import if it doesn't already exist -- see "LAGs" above; <code>mac_address</code>
+      is optional and, if set, must be unique across all ports. All four are blank in older exports,
       which still re-import fine.)</li>
     <li><strong>Cables:</strong> <code>device_a, port_a, device_b, port_b, label</code></li>
     <li><strong>Sites:</strong> <code>name</code> -- one row per managed site.</li>
@@ -460,11 +497,12 @@
   want the connections back).</p>
   <p><strong>Reset data</strong>, in Settings (admin only), goes further:
   it permanently deletes every device, port, and cable, and also clears
-  your Sites list and resets Device roles / Interface speeds back to their
-  full default (everything enabled) -- a genuinely blank slate to start
-  documenting a different environment from scratch, including its own
-  picker-setting customizations, not just its topology. It asks you to
-  type "RESET" to confirm, since it can't be undone (download a backup
+  your Sites list, any configured pfSense instances, and resets Device
+  roles / Interface speeds back to their full default (everything enabled)
+  -- a genuinely blank slate to start documenting a different environment
+  from scratch, including its own picker-setting customizations, not just
+  its topology. It asks you to type "RESET" to confirm, since it can't be
+  undone (download a backup
   first if there's any chance you'll want any of it back).</p>
 </div>
 </body>

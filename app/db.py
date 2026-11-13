@@ -85,6 +85,45 @@ CREATE TABLE IF NOT EXISTS lags (
     name        TEXT NOT NULL,
     UNIQUE(device_id, name)
 );
+
+-- One row per pfSense box LinkLedger polls for ARP/DHCP data (via the
+-- third-party pfSense-pkg-API package -- pfSense itself has no native
+-- REST API). A real list rather than a single meta-blob setting because a
+-- household/homelab can have more than one site, each with its own
+-- pfSense instance. `site` is free-text, matching the devices.site
+-- convention (no FK) -- used to pre-fill a discovered device's Site field
+-- on import and to group/filter the Discovery view.
+CREATE TABLE IF NOT EXISTS pfsense_instances (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                 TEXT NOT NULL,
+    site                 TEXT NOT NULL DEFAULT '',
+    base_url             TEXT NOT NULL,
+    api_key              TEXT NOT NULL DEFAULT '',
+    verify_tls           INTEGER NOT NULL DEFAULT 1,
+    enabled              INTEGER NOT NULL DEFAULT 1,
+    selected_interfaces  TEXT NOT NULL DEFAULT '[]',
+    poll_minutes         INTEGER NOT NULL DEFAULT 20,
+    last_sync_at         TEXT,
+    last_sync_status     TEXT NOT NULL DEFAULT ''
+);
+
+-- Staging list of MACs seen in a pfSense instance's ARP/DHCP data that
+-- aren't already claimed by a port (see idx_ports_mac above). Refreshed
+-- on every sync rather than accumulated forever -- see
+-- crud.sync_pfsense_instance. IP/DNS name here are transient, sourced
+-- live from pfSense's own DHCP leases -- LinkLedger does not otherwise
+-- track L3 anywhere.
+CREATE TABLE IF NOT EXISTS discovered_devices (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    mac_address         TEXT NOT NULL UNIQUE,
+    pfsense_instance_id INTEGER NOT NULL REFERENCES pfsense_instances(id) ON DELETE CASCADE,
+    interface           TEXT NOT NULL DEFAULT '',
+    dns_name            TEXT NOT NULL DEFAULT '',
+    ip_address          TEXT NOT NULL DEFAULT '',
+    first_seen          TEXT NOT NULL,
+    last_seen           TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'pending'
+);
 """
 
 # The fixed set of device roles the app supports. A device's role is just
@@ -168,6 +207,18 @@ def _migrate(conn):
         conn.execute("ALTER TABLE ports ADD COLUMN grid_row INTEGER")
     if "grid_col" not in cols:
         conn.execute("ALTER TABLE ports ADD COLUMN grid_col INTEGER")
+    if "mac_address" not in cols:
+        # NULL means unknown/not recorded. Normalized to uppercase
+        # colon-separated form by crud.set_port_mac. Layer 2 only --
+        # LinkLedger deliberately does not track IP/L3 anywhere.
+        conn.execute("ALTER TABLE ports ADD COLUMN mac_address TEXT")
+    # Partial unique index so two ports can't claim the same MAC, while
+    # any number of NULLs (unknown) is fine. Re-run every migration --
+    # CREATE ... IF NOT EXISTS is a no-op once it's there.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ports_mac "
+        "ON ports(mac_address) WHERE mac_address IS NOT NULL"
+    )
 
     device_cols = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "poe_required" not in device_cols:

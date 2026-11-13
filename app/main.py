@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import secrets
 from typing import Optional
@@ -8,9 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import crud, csvio, db, pathfind
+from . import crud, csvio, db, pathfind, pfsense
 
-VERSION = "1.7.2"
+VERSION = "1.8.0"
 log = logging.getLogger("linkledger")
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,28 @@ def startup():
         )
 
 
+# pfSense device-discovery polling -- a single shared loop, woken every
+# ~60s, that checks each enabled pfsense_instances row's own poll_minutes
+# due-check (see crud.sync_due_pfsense_instances). One loop rather than one
+# task per instance so instances can be added/edited/removed/toggled at
+# runtime without juggling a dynamic set of background tasks.
+_PFSENSE_POLL_TICK_SECONDS = 60
+
+
+@app.on_event("startup")
+async def start_pfsense_poller():
+    async def loop():
+        while True:
+            try:
+                with db.session() as conn:
+                    crud.sync_due_pfsense_instances(conn)
+            except Exception:
+                log.exception("pfSense discovery poll loop hit an unexpected error")
+            await asyncio.sleep(_PFSENSE_POLL_TICK_SECONDS)
+
+    asyncio.create_task(loop())
+
+
 def handle(fn, *args, **kwargs):
     with db.session() as conn:
         try:
@@ -117,6 +140,8 @@ def handle(fn, *args, **kwargs):
             raise HTTPException(status_code=404, detail=str(e))
         except crud.ConflictError as e:
             raise HTTPException(status_code=409, detail=str(e))
+        except pfsense.PfsenseError as e:
+            raise HTTPException(status_code=502, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +213,8 @@ class PortUpdate(BaseModel):
     speed: Optional[str] = None
     vlans: Optional[str] = None
     poe_supply: Optional[bool] = None
+    # Layer 2 only -- see ports.mac_address. Empty string clears it.
+    mac_address: Optional[str] = None
 
 
 class PairIn(BaseModel):
@@ -231,6 +258,41 @@ class EnabledRolesIn(BaseModel):
 
 class EnabledReportsIn(BaseModel):
     reports: list[str]
+
+
+class PfsenseInstanceIn(BaseModel):
+    name: str
+    site: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    verify_tls: bool = True
+    enabled: bool = True
+    poll_minutes: int = 20
+
+
+class PfsenseInstanceUpdate(BaseModel):
+    name: Optional[str] = None
+    site: Optional[str] = None
+    base_url: Optional[str] = None
+    # Blank/omitted leaves the stored key untouched -- see
+    # crud.update_pfsense_instance (a GET never returns the real key).
+    api_key: Optional[str] = None
+    verify_tls: Optional[bool] = None
+    enabled: Optional[bool] = None
+    selected_interfaces: Optional[list[str]] = None
+    poll_minutes: Optional[int] = None
+
+
+class ImportDiscoveredIn(BaseModel):
+    name: str
+    role: str = ""
+    model: str = ""
+    site: Optional[str] = None
+    notes: str = ""
+
+
+class LinkDiscoveredIn(BaseModel):
+    port_id: int
 
 
 class LoginIn(BaseModel):
@@ -342,7 +404,7 @@ def api_create_patch_panel(device_id: int, body: PatchPanelIn):
 @app.put("/api/ports/{port_id}", dependencies=[Depends(require_admin)])
 def api_update_port(port_id: int, body: PortUpdate):
     return handle(crud.update_port, port_id, name=body.name, speed=body.speed, vlans=body.vlans,
-                  poe_supply=body.poe_supply)
+                  poe_supply=body.poe_supply, mac_address=body.mac_address)
 
 
 @app.delete("/api/ports/{port_id}", dependencies=[Depends(require_admin)])
@@ -541,6 +603,79 @@ def api_get_report_settings():
 @app.put("/api/settings/reports", dependencies=[Depends(require_admin)])
 def api_set_report_settings(body: EnabledReportsIn):
     return {"enabled": handle(crud.set_enabled_reports, body.reports)}
+
+
+# ---------------------------------------------------------------------------
+# pfSense device discovery -- one or more pfSense instances (each via the
+# third-party pfSense-pkg-API package, see app/pfsense.py), polled for ARP
+# + DHCP data on their own interval, feeding the Discovery staging list
+# below. Settings (instance CRUD/test/interfaces) are admin-only; the
+# Discovery list and its resolving actions (ignore/import/link) are too,
+# since they write data.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/pfsense", dependencies=[Depends(require_admin)])
+def api_list_pfsense_instances():
+    return handle(crud.list_pfsense_instances)
+
+
+@app.post("/api/settings/pfsense", dependencies=[Depends(require_admin)])
+def api_create_pfsense_instance(body: PfsenseInstanceIn):
+    return handle(crud.create_pfsense_instance, name=body.name, site=body.site, base_url=body.base_url,
+                  api_key=body.api_key, verify_tls=body.verify_tls, enabled=body.enabled,
+                  poll_minutes=body.poll_minutes)
+
+
+@app.put("/api/settings/pfsense/{instance_id}", dependencies=[Depends(require_admin)])
+def api_update_pfsense_instance(instance_id: int, body: PfsenseInstanceUpdate):
+    return handle(crud.update_pfsense_instance, instance_id, **body.model_dump(exclude_unset=True))
+
+
+@app.delete("/api/settings/pfsense/{instance_id}", dependencies=[Depends(require_admin)])
+def api_delete_pfsense_instance(instance_id: int):
+    handle(crud.delete_pfsense_instance, instance_id)
+    return {"ok": True}
+
+
+@app.post("/api/settings/pfsense/{instance_id}/test", dependencies=[Depends(require_admin)])
+def api_test_pfsense_instance(instance_id: int):
+    handle(crud.test_pfsense_instance, instance_id)
+    return {"ok": True}
+
+
+@app.get("/api/settings/pfsense/{instance_id}/interfaces", dependencies=[Depends(require_admin)])
+def api_list_pfsense_interfaces(instance_id: int):
+    return handle(crud.list_pfsense_interfaces, instance_id)
+
+
+@app.post("/api/discovery/sync", dependencies=[Depends(require_admin)])
+def api_sync_discovery(instance_id: Optional[int] = None):
+    if instance_id is not None:
+        handle(crud.sync_pfsense_instance, instance_id)
+    else:
+        handle(crud.sync_due_pfsense_instances)
+    return {"ok": True}
+
+
+@app.get("/api/discovery", dependencies=[Depends(require_admin)])
+def api_list_discovery(status: Optional[str] = "pending", instance_id: Optional[int] = None):
+    return handle(crud.list_discovered_devices, status=status, instance_id=instance_id)
+
+
+@app.post("/api/discovery/{discovered_id}/ignore", dependencies=[Depends(require_admin)])
+def api_ignore_discovered(discovered_id: int):
+    return handle(crud.ignore_discovered, discovered_id)
+
+
+@app.post("/api/discovery/{discovered_id}/import", dependencies=[Depends(require_admin)])
+def api_import_discovered(discovered_id: int, body: ImportDiscoveredIn):
+    return handle(crud.import_discovered, discovered_id, name=body.name, role=body.role, model=body.model,
+                  site=body.site, notes=body.notes)
+
+
+@app.post("/api/discovery/{discovered_id}/link", dependencies=[Depends(require_admin)])
+def api_link_discovered(discovered_id: int, body: LinkDiscoveredIn):
+    return handle(crud.link_discovered, discovered_id, body.port_id)
 
 
 # ---------------------------------------------------------------------------

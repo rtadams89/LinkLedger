@@ -32,9 +32,12 @@ DEVICE_COLUMNS = DEVICE_CORE_COLUMNS + DEVICE_MAP_COLUMNS
 # grid_row/grid_col are only meaningful while the owning device's
 # port_layout_mode is 'custom' (see DEVICE_MAP_COLUMNS above), but are
 # always exported/restored so switching a device back to custom later
-# doesn't lose previously-placed positions.
+# doesn't lose previously-placed positions. mac_address is likewise always
+# written/read when present but absent from _SCHEMAS' detection set below,
+# so an older ports export (from before this column existed) still
+# imports fine -- every port just comes back with no MAC.
 PORT_COLUMNS = ["device_name", "port_name", "speed", "vlans", "poe_supply", "pair_with",
-                "wireless_link", "uplink_for", "lag", "grid_row", "grid_col"]
+                "wireless_link", "uplink_for", "lag", "grid_row", "grid_col", "mac_address"]
 CABLE_COLUMNS = ["device_a", "port_a", "device_b", "port_b", "label"]
 SITE_COLUMNS = ["name"]
 ROLE_COLUMNS = ["role"]      # one row per currently-enabled role
@@ -155,7 +158,8 @@ def _export_ports(conn) -> bytes:
         w.writerow([p["device_name"], p["name"], p["speed"], p["vlans"], _bool_cell(p["poe_supply"]),
                     pair_with, wireless_link, uplink_for.get(p["id"], ""), lag_name.get(p["id"], ""),
                     "" if p["grid_row"] is None else p["grid_row"],
-                    "" if p["grid_col"] is None else p["grid_col"]])
+                    "" if p["grid_col"] is None else p["grid_col"],
+                    p["mac_address"] or ""])
     return out.getvalue().encode("utf-8")
 
 
@@ -326,6 +330,21 @@ def _import_ports(conn, rows):
         if speed and speed not in crud.SPEED_MBPS:
             errors.append(f"row {i}: unrecognized speed '{speed}'")
 
+    mac_cells = {}  # normalized MAC -> first row number that used it
+    for i, row in enumerate(rows, start=2):
+        mac_raw = (row.get("mac_address") or "").strip()
+        if not mac_raw:
+            continue
+        try:
+            mac = crud.normalize_mac(mac_raw)
+        except crud.ConflictError as e:
+            errors.append(f"row {i}: {e}")
+            continue
+        if mac in mac_cells:
+            errors.append(f"row {i}: MAC address {mac} is already used on row {mac_cells[mac]}")
+        else:
+            mac_cells[mac] = i
+
     for i, row in enumerate(rows, start=2):
         dname = (row.get("device_name") or "").strip()
         pair_with = (row.get("pair_with") or "").strip()
@@ -356,12 +375,14 @@ def _import_ports(conn, rows):
     port_ids = {}
     for row in rows:
         dname, pname = row["device_name"].strip(), row["port_name"].strip()
+        mac_raw = (row.get("mac_address") or "").strip()
+        mac = crud.normalize_mac(mac_raw) if mac_raw else None
         cur = conn.execute(
-            "INSERT INTO ports (device_id, name, speed, vlans, poe_supply, grid_row, grid_col) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ports (device_id, name, speed, vlans, poe_supply, grid_row, grid_col, mac_address) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (device_ids[dname], pname, (row.get("speed") or "").strip(), (row.get("vlans") or "").strip(),
              int(_yesno(row.get("poe_supply"))),
-             _int_cell(row.get("grid_row")), _int_cell(row.get("grid_col"))),
+             _int_cell(row.get("grid_row")), _int_cell(row.get("grid_col")), mac),
         )
         port_ids[(dname, pname)] = cur.lastrowid
 

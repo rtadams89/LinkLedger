@@ -54,6 +54,20 @@ and more.
 
 ![The Reports tab, flagging unused ports and other data-quality issues](docs/screenshots/reports.png)
 
+Ports can optionally carry a MAC address (still layer 2 only — see above),
+and LinkLedger can optionally poll one or more pfSense firewalls for
+ARP/DHCP data to find devices on your network that aren't in LinkLedger
+yet. New MACs show up on the Discovery tab, identified by MAC and (when
+DHCP has it) DNS name and IP — IP/DNS are only ever shown there, never
+stored. You pick which interfaces/VLANs to pull from per pfSense instance
+(so a guest VLAN can be excluded, for example), and each pending device is
+either ignored, used to create a new device, or linked to an existing
+port's MAC. Because pfSense itself has no built-in REST API, this requires
+installing the third-party **pfSense-pkg-API** package (System > Package
+Manager in the pfSense GUI) and configuring an API key there first; set it
+up per pfSense instance from Settings → pfSense device discovery. Multiple
+pfSense instances are supported, one per site, if you have more than one.
+
 ## Setting up accounts
 
 LinkLedger has exactly two accounts (admin and viewer), signed into with an

@@ -163,11 +163,13 @@ async function renderView(state) {
   document.getElementById("tabPath").classList.toggle("active", tab === "path");
   document.getElementById("tabMap").classList.toggle("active", tab === "map");
   document.getElementById("tabReports").classList.toggle("active", tab === "reports");
+  document.getElementById("tabDiscovery").classList.toggle("active", tab === "discovery");
   document.getElementById("browseView").style.display = tab === "browse" ? "block" : "none";
   document.getElementById("deviceView").style.display = tab === "device" ? "block" : "none";
   document.getElementById("pathView").style.display = tab === "path" ? "block" : "none";
   document.getElementById("mapView").style.display = tab === "map" ? "block" : "none";
   document.getElementById("reportsView").style.display = tab === "reports" ? "block" : "none";
+  document.getElementById("discoveryView").style.display = tab === "discovery" ? "block" : "none";
   // Hidden until a device has been viewed at least once.
   document.getElementById("tabDevice").style.display = lastViewedDeviceId ? "" : "none";
 
@@ -175,6 +177,7 @@ async function renderView(state) {
   else if (tab === "path") await renderPathFinder();
   else if (tab === "map") await renderMapView();
   else if (tab === "reports") await renderReportsView();
+  else if (tab === "discovery") await renderDiscoveryView();
   else await renderBrowseHome();
 }
 
@@ -328,6 +331,11 @@ function poeSupplyTag(supplies) {
 function lagTag(lagName) {
   if (!lagName) return "";
   return `<span class="tag lag-tag">LAG: ${esc(lagName)}</span>`;
+}
+
+function macTag(mac) {
+  if (!mac) return "";
+  return `<span class="tag" style="background:#f1f5f9;color:#475569;font-family:monospace;">${esc(mac)}</span>`;
 }
 
 // Shown on a port that belongs to a device flagged as needing PoE --
@@ -491,7 +499,7 @@ async function renderDeviceView(id, highlightPortId) {
   } else {
     portRows = `<table><tr><th>Port / NIC</th><th>Connected to</th><th></th></tr>` +
       d.ports.map(p => `<tr data-port-row="${p.id}">
-        <td class="port-name">${esc(p.name)} ${speedTag(p.speed)}${VLAN_POE_CAPABLE_ROLES.includes(d.role) ? poeSupplyTag(p.poe_supply) + vlanTag(p.vlans) : (p.virtual_switch_id ? vlanTag(p.vlans) : "")}${lagTag(p.lag_name)}</td>
+        <td class="port-name">${esc(p.name)} ${speedTag(p.speed)}${VLAN_POE_CAPABLE_ROLES.includes(d.role) ? poeSupplyTag(p.poe_supply) + vlanTag(p.vlans) : (p.virtual_switch_id ? vlanTag(p.vlans) : "")}${lagTag(p.lag_name)}${macTag(p.mac_address)}</td>
         <td class="chain">${chainHTML(p.trace, p.effective_speed, p.effective_vlans)} ${poeNeedTag(d.poe_required, p.poe_supplied)}</td>
         <td>${portActions(p, d.role)}</td>
       </tr>`).join("") + `</table>`;
@@ -560,7 +568,7 @@ function portActions(p, deviceRole) {
   }
   const portData = {
     id: p.id, name: p.name, speed: p.speed, vlans: p.vlans, poe_supply: p.poe_supply,
-    deviceRole, virtual_switch_id: p.virtual_switch_id,
+    mac_address: p.mac_address, deviceRole, virtual_switch_id: p.virtual_switch_id,
   };
   return `<span class="row-actions">
     ${disconnectBtn}
@@ -2355,6 +2363,10 @@ async function openEditPortModal(port) {
     <div class="field checkbox-field">
       <label><input type="checkbox" id="ep_poe" ${port.poe_supply ? "checked" : ""}> Supplies PoE</label>
     </div>` : ""}
+    <div class="field"><label>MAC address</label>
+      <input type="text" id="ep_mac" value="${esc(port.mac_address || "")}" placeholder="e.g. AA:BB:CC:DD:EE:FF">
+      <span class="note">Layer 2 only &mdash; LinkLedger doesn't track IP addresses. Used to match this port against pfSense discovery data, if set up (see the Discovery tab).</span>
+    </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitEditPort(${port.id})">Save</button>
@@ -2365,6 +2377,7 @@ async function submitEditPort(portId) {
   const body = {
     name: document.getElementById("ep_name").value,
     speed: document.getElementById("ep_speed").value,
+    mac_address: document.getElementById("ep_mac").value,
   };
   const vlansField = document.getElementById("ep_vlans");
   if (vlansField) body.vlans = vlansField.value;
@@ -2501,6 +2514,204 @@ async function renderReportsView() {
 
   box.innerHTML = sections.length ? sections.join("") : `
     <div class="card"><div class="empty-state">No reports are shown &mdash; pick some from Settings &rarr; Reports shown.</div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Discovery -- pending devices found via pfSense ARP/DHCP sync (see
+// Settings -> pfSense device discovery). Every /api/discovery* and
+// /api/settings/pfsense* endpoint is admin-only, same as this tab.
+// ---------------------------------------------------------------------------
+let discoveryInstanceFilter = "";
+
+async function renderDiscoveryView() {
+  const box = document.getElementById("discoveryView");
+  box.innerHTML = `<div class="card"><div class="empty-state">Loading…</div></div>`;
+  let rows, instances;
+  try {
+    [rows, instances] = await Promise.all([
+      api(`/api/discovery${discoveryInstanceFilter ? `?instance_id=${discoveryInstanceFilter}` : ""}`),
+      api("/api/settings/pfsense"),
+    ]);
+  } catch (e) {
+    box.innerHTML = `<div class="card"><div class="error-msg">${esc(e.message)}</div></div>`;
+    return;
+  }
+  const instanceOptions = instances.map(i =>
+    `<option value="${i.id}" ${String(i.id) === String(discoveryInstanceFilter) ? "selected" : ""}>${esc(i.name)}</option>`
+  ).join("");
+  box.innerHTML = `
+    <div class="card">
+      <div class="device-header">
+        <strong>Discovered devices</strong>
+        <span class="note">${rows.length} pending</span>
+        <div class="spacer"></div>
+        ${instances.length > 1 ? `
+        <select id="discoveryInstanceFilter" style="width:auto;" onchange="onDiscoveryInstanceFilterChange(this.value)">
+          <option value="">All instances</option>
+          ${instanceOptions}
+        </select>` : ""}
+        <button class="btn small" onclick="syncAllPfsenseNow()">Sync now</button>
+      </div>
+      ${instances.length === 0 ? `
+        <div class="empty-state">No pfSense instances are set up yet. Add one in <a class="link" onclick="window.open('/static/settings.html', '_blank')">Settings</a> to start finding new devices automatically.</div>
+      ` : rows.length === 0 ? `
+        <div class="empty-state">No pending devices right now. New MACs seen in pfSense's ARP/DHCP data on an enabled interface show up here.</div>
+      ` : `
+        <table><tr><th>MAC address</th><th>DNS name</th><th>IP</th><th>Interface</th><th>Source</th><th>Last seen</th><th></th></tr>
+          ${rows.map(discoveryRow).join("")}
+        </table>
+      `}
+    </div>`;
+}
+
+function discoveryRow(r) {
+  return `<tr data-discovery-row="${r.id}">
+    <td style="font-family:monospace;">${esc(r.mac_address)}</td>
+    <td>${esc(r.dns_name || "—")}</td>
+    <td>${esc(r.ip_address || "—")}</td>
+    <td>${esc(r.interface || "—")}</td>
+    <td>${esc(r.instance_name)}${r.site ? ` <span class="note">(${esc(r.site)})</span>` : ""}</td>
+    <td>${esc(r.last_seen)}</td>
+    <td class="row-actions">
+      <button class="btn small" onclick="openImportDiscoveredModal(${r.id})">Create device</button>
+      <button class="btn small" onclick="openLinkDiscoveredModal(${r.id})">Link to port</button>
+      <button class="btn small danger" onclick="ignoreDiscovered(${r.id})">Ignore</button>
+    </td>
+  </tr>`;
+}
+
+function onDiscoveryInstanceFilterChange(value) {
+  discoveryInstanceFilter = value;
+  renderDiscoveryView();
+}
+
+async function syncAllPfsenseNow() {
+  try {
+    await api("/api/discovery/sync", { method: "POST" });
+    showToast("Synced");
+    renderDiscoveryView();
+  } catch (e) { showToast(e.message, true); }
+}
+
+async function ignoreDiscovered(id) {
+  if (!confirm("Ignore this device? It won't show up again unless a future sync sees new activity for it.")) return;
+  try {
+    await api(`/api/discovery/${id}/ignore`, { method: "POST" });
+    showToast("Ignored");
+    renderDiscoveryView();
+  } catch (e) { showToast(e.message, true); }
+}
+
+// --- Create device from a discovered MAC ---
+async function openImportDiscoveredModal(discoveredId) {
+  const [roleSettings, sites] = await Promise.all([api("/api/settings/roles"), api("/api/sites")]);
+  const siteNames = sites.map(s => s.name);
+  renderModal(`
+    <h3>Create device from discovered MAC</h3>
+    <div id="importDiscoveredError"></div>
+    <div class="field"><label>Name</label><input type="text" id="imp_name" placeholder="Device name"></div>
+    <div class="field"><label>Role</label>
+      <select id="imp_role">
+        <option value="">(none)</option>
+        ${roleSettings.enabled.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Model</label><input type="text" id="imp_model"></div>
+    <div class="field"><label>Site ${siteNames.length === 0 ? `<span class="note">(add some in <a class="link" onclick="window.open('/static/settings.html', '_blank')">Settings</a>)</span>` : ""}</label>
+      <select id="imp_site">
+        <option value="">(use the pfSense instance's site, if it has one)</option>
+        ${siteNames.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field"><label>Notes</label><input type="text" id="imp_notes"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitImportDiscovered(${discoveredId})">Create device</button>
+    </div>`);
+}
+
+async function submitImportDiscovered(discoveredId) {
+  const name = document.getElementById("imp_name").value.trim();
+  if (!name) {
+    document.getElementById("importDiscoveredError").innerHTML = `<div class="error-msg">Name is required.</div>`;
+    return;
+  }
+  const siteVal = document.getElementById("imp_site").value;
+  const body = {
+    name,
+    role: document.getElementById("imp_role").value,
+    model: document.getElementById("imp_model").value,
+    notes: document.getElementById("imp_notes").value,
+  };
+  if (siteVal) body.site = siteVal;  // omitted -> crud.import_discovered falls back to the instance's own site
+  try {
+    const device = await api(`/api/discovery/${discoveredId}/import`, { method: "POST", body: JSON.stringify(body) });
+    closeModal();
+    showToast("Device created");
+    viewDevice(device.id);
+  } catch (e) {
+    document.getElementById("importDiscoveredError").innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
+  }
+}
+
+// --- Link a discovered MAC to an existing port ---
+async function openLinkDiscoveredModal(discoveredId) {
+  renderModal(`
+    <h3>Link discovered MAC to an existing port</h3>
+    <div id="linkDiscoveredError"></div>
+    <div class="field autocomplete" style="margin-bottom:0;">
+      <label>Device</label>
+      <input type="text" id="dl_deviceSearch" placeholder="Search a device..." autocomplete="off"
+             oninput="onLinkDiscoveredDeviceSearch()" onfocus="onLinkDiscoveredDeviceSearch()">
+      <input type="hidden" id="dl_deviceId">
+      <div class="results" id="dl_deviceResults"></div>
+    </div>
+    <div class="field"><label>Port</label><select id="dl_port"><option value="">Select device first...</option></select></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitLinkDiscovered(${discoveredId})">Link</button>
+    </div>`);
+}
+
+async function onLinkDiscoveredDeviceSearch() {
+  const q = document.getElementById("dl_deviceSearch").value.trim();
+  const box = document.getElementById("dl_deviceResults");
+  if (!q) { box.classList.remove("show"); return; }
+  const matches = await api(`/api/devices?q=${encodeURIComponent(q)}`);
+  box.innerHTML = matches.length
+    ? matches.map(d => `<div class="result-item" onclick='selectLinkDiscoveredDevice(${d.id}, ${JSON.stringify(d.name).replace(/'/g, "&#39;")})'><span>${escBreakable(d.name)}</span>${roleBadge(d.role)}</div>`).join("")
+    : `<div class="result-item">No matches</div>`;
+  box.classList.add("show");
+}
+
+async function selectLinkDiscoveredDevice(id, name) {
+  document.getElementById("dl_deviceId").value = id;
+  const inp = document.getElementById("dl_deviceSearch");
+  inp.value = name;
+  inp.title = name;
+  document.getElementById("dl_deviceResults").classList.remove("show");
+  const d = await api(`/api/devices/${id}`);
+  const sel = document.getElementById("dl_port");
+  sel.innerHTML = d.ports.length
+    ? d.ports.map(p => `<option value="${p.id}">${esc(p.name)}${p.mac_address ? ` (already has a MAC)` : ""}</option>`).join("")
+    : `<option value="" disabled>No ports on this device</option>`;
+}
+
+async function submitLinkDiscovered(discoveredId) {
+  const portId = document.getElementById("dl_port").value;
+  const errBox = document.getElementById("linkDiscoveredError");
+  if (!portId) {
+    errBox.innerHTML = `<div class="error-msg">Pick a device and port first.</div>`;
+    return;
+  }
+  try {
+    await api(`/api/discovery/${discoveredId}/link`, { method: "POST", body: JSON.stringify({ port_id: Number(portId) }) });
+    closeModal();
+    showToast("Linked");
+    renderDiscoveryView();
+  } catch (e) {
+    errBox.innerHTML = `<div class="error-msg">${esc(e.message)}</div>`;
+  }
 }
 
 async function deletePort(portId) {

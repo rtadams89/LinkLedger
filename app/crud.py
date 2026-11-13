@@ -3,10 +3,15 @@
 import hashlib
 import hmac
 import json
+import logging
+import re
 import secrets
 import sqlite3
+from datetime import datetime, timezone
 
-from . import db
+from . import db, pfsense
+
+log = logging.getLogger("linkledger")
 
 # Recognized port speeds, in Mbps.
 SPEED_MBPS = {
@@ -346,9 +351,25 @@ def delete_port(conn, port_id: int):
     conn.execute("DELETE FROM ports WHERE id = ?", (port_id,))
 
 
+_MAC_HEX_RE = re.compile(r"^[0-9A-F]{12}$")
+
+
+def normalize_mac(raw: str) -> str:
+    """Accepts colon/dash/dot-separated or bare hex and returns the
+    canonical uppercase colon-separated form (AA:BB:CC:DD:EE:FF). Raises
+    ConflictError if it doesn't look like a MAC address."""
+    stripped = re.sub(r"[.:-]", "", raw.strip().upper())
+    if not _MAC_HEX_RE.match(stripped):
+        raise ConflictError(f"'{raw}' doesn't look like a MAC address")
+    return ":".join(stripped[i:i + 2] for i in range(0, 12, 2))
+
+
 def update_port(conn, port_id: int, name: str | None = None, speed: str | None = None,
-                 vlans: str | None = None, poe_supply: bool | None = None):
-    """Partial update -- only fields that are not None are changed."""
+                 vlans: str | None = None, poe_supply: bool | None = None,
+                 mac_address: str | None = None):
+    """Partial update -- only fields that are not None are changed. An
+    empty string for mac_address clears it; a non-empty value is
+    normalized/validated (see normalize_mac) and checked for uniqueness."""
     get_port(conn, port_id)
     updates = {}
     if name is not None:
@@ -365,12 +386,27 @@ def update_port(conn, port_id: int, name: str | None = None, speed: str | None =
         updates["vlans"] = vlans.strip()
     if poe_supply is not None:
         updates["poe_supply"] = int(bool(poe_supply))
+    if mac_address is not None:
+        mac_address = mac_address.strip()
+        if mac_address:
+            mac_address = normalize_mac(mac_address)
+            dupe = conn.execute(
+                "SELECT id FROM ports WHERE mac_address = ? AND id != ?",
+                (mac_address, port_id),
+            ).fetchone()
+            if dupe:
+                raise ConflictError(f"MAC address {mac_address} is already assigned to another port")
+            updates["mac_address"] = mac_address
+        else:
+            updates["mac_address"] = None
     if not updates:
         return get_port(conn, port_id)
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     try:
         conn.execute(f"UPDATE ports SET {set_clause} WHERE id = ?", (*updates.values(), port_id))
     except sqlite3.IntegrityError:
+        if "mac_address" in updates:
+            raise ConflictError(f"MAC address {updates['mac_address']} is already assigned to another port")
         raise ConflictError(f"this device already has a port named '{updates.get('name')}'")
     return get_port(conn, port_id)
 
@@ -837,12 +873,15 @@ def clear_all_connections(conn):
 
 
 def reset_all_data(conn):
-    """Wipes every device, port, and cable, clears the Sites list, and
-    resets the role/speed/report picker settings back to their defaults."""
+    """Wipes every device, port, and cable, clears the Sites list and any
+    configured pfSense instances (discovered_devices cascades with it),
+    and resets the role/speed/report picker settings back to their
+    defaults."""
     conn.execute("DELETE FROM cables")
     conn.execute("DELETE FROM ports")
     conn.execute("DELETE FROM devices")
     conn.execute("DELETE FROM sites")
+    conn.execute("DELETE FROM pfsense_instances")
     conn.execute("DELETE FROM meta WHERE key IN ('enabled_roles', 'enabled_speeds', 'enabled_reports')")
 
 
@@ -1047,3 +1086,258 @@ def data_quality_report(conn):
         "poe_unmet": poe_unmet,
         "speed_mismatches": speed_mismatches,
     }
+
+
+# ---------------------------------------------------------------------------
+# pfSense instances -- device-discovery sources. See app/pfsense.py for the
+# actual HTTP client; this module just persists instance config + the
+# discovered-device staging list and orchestrates a sync.
+# ---------------------------------------------------------------------------
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _mask_api_key(key: str) -> str:
+    if not key:
+        return ""
+    return "•" * max(len(key) - 4, 0) + key[-4:]
+
+
+def _pfsense_instance_row(row, mask=True) -> dict:
+    d = dict(row)
+    if mask:
+        d["api_key"] = _mask_api_key(d["api_key"])
+    d["selected_interfaces"] = json.loads(d["selected_interfaces"] or "[]")
+    return d
+
+
+def list_pfsense_instances(conn):
+    rows = conn.execute("SELECT * FROM pfsense_instances ORDER BY name COLLATE NOCASE").fetchall()
+    return [_pfsense_instance_row(r) for r in rows]
+
+
+def get_pfsense_instance(conn, instance_id: int, mask=True):
+    row = conn.execute("SELECT * FROM pfsense_instances WHERE id = ?", (instance_id,)).fetchone()
+    if not row:
+        raise NotFoundError(f"pfSense instance {instance_id} not found")
+    return _pfsense_instance_row(row, mask=mask)
+
+
+def _get_pfsense_instance_raw(conn, instance_id: int):
+    """Internal: returns the row with the real api_key and
+    selected_interfaces still JSON-encoded, for actually talking to the
+    instance (app.pfsense expects it in that form). list_pfsense_instances
+    / get_pfsense_instance mask the key and decode interfaces for display."""
+    row = conn.execute("SELECT * FROM pfsense_instances WHERE id = ?", (instance_id,)).fetchone()
+    if not row:
+        raise NotFoundError(f"pfSense instance {instance_id} not found")
+    return dict(row)
+
+
+def create_pfsense_instance(conn, name: str, site: str = "", base_url: str = "",
+                             api_key: str = "", verify_tls: bool = True, enabled: bool = True,
+                             poll_minutes: int = 20):
+    name = name.strip()
+    if not name:
+        raise ConflictError("a name is required")
+    base_url = base_url.strip()
+    if not base_url:
+        raise ConflictError("a base URL is required")
+    cur = conn.execute(
+        "INSERT INTO pfsense_instances (name, site, base_url, api_key, verify_tls, enabled, poll_minutes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, site.strip(), base_url, api_key.strip(), int(bool(verify_tls)), int(bool(enabled)),
+         max(int(poll_minutes), 1)),
+    )
+    return get_pfsense_instance(conn, cur.lastrowid)
+
+
+def update_pfsense_instance(conn, instance_id: int, **fields):
+    """Partial update. Recognized keys: name, site, base_url, api_key,
+    verify_tls, enabled, selected_interfaces (list[str]), poll_minutes.
+    Only keys actually passed (and not None) are changed; api_key is only
+    overwritten when a non-empty value is given, so the masked value a
+    GET returns can't accidentally get written back as the real key."""
+    get_pfsense_instance(conn, instance_id)
+    updates = {}
+    if fields.get("name") is not None:
+        name = fields["name"].strip()
+        if not name:
+            raise ConflictError("a name is required")
+        updates["name"] = name
+    if fields.get("site") is not None:
+        updates["site"] = fields["site"].strip()
+    if fields.get("base_url") is not None:
+        base_url = fields["base_url"].strip()
+        if not base_url:
+            raise ConflictError("a base URL is required")
+        updates["base_url"] = base_url
+    if fields.get("api_key"):
+        updates["api_key"] = fields["api_key"].strip()
+    if fields.get("verify_tls") is not None:
+        updates["verify_tls"] = int(bool(fields["verify_tls"]))
+    if fields.get("enabled") is not None:
+        updates["enabled"] = int(bool(fields["enabled"]))
+    if fields.get("selected_interfaces") is not None:
+        updates["selected_interfaces"] = json.dumps(list(fields["selected_interfaces"]))
+    if fields.get("poll_minutes") is not None:
+        updates["poll_minutes"] = max(int(fields["poll_minutes"]), 1)
+    if not updates:
+        return get_pfsense_instance(conn, instance_id)
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(f"UPDATE pfsense_instances SET {set_clause} WHERE id = ?", (*updates.values(), instance_id))
+    return get_pfsense_instance(conn, instance_id)
+
+
+def delete_pfsense_instance(conn, instance_id: int):
+    get_pfsense_instance(conn, instance_id)
+    conn.execute("DELETE FROM pfsense_instances WHERE id = ?", (instance_id,))
+    # discovered_devices rows for this instance cascade via ON DELETE CASCADE.
+
+
+def test_pfsense_instance(conn, instance_id: int):
+    """Raises pfsense.PfsenseError on failure."""
+    pfsense.test_connection(_get_pfsense_instance_raw(conn, instance_id))
+
+
+def list_pfsense_interfaces(conn, instance_id: int):
+    """Raises pfsense.PfsenseError on failure."""
+    return pfsense.list_interfaces(_get_pfsense_instance_raw(conn, instance_id))
+
+
+def sync_pfsense_instance(conn, instance_id: int):
+    """Pulls ARP/DHCP data for one instance and upserts discovered_devices,
+    skipping any MAC already claimed by a real port. Used by both the
+    manual "Sync now" button and the background poller. Raises
+    pfsense.PfsenseError on failure (last_sync_status is recorded either
+    way, so a failed sync is still visible in the Settings UI)."""
+    instance = _get_pfsense_instance_raw(conn, instance_id)
+    now = _now_iso()
+    try:
+        seen = pfsense.fetch_arp_and_leases(instance)
+    except pfsense.PfsenseError as e:
+        conn.execute(
+            "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = ? WHERE id = ?",
+            (now, f"error: {e}", instance_id),
+        )
+        raise
+    claimed = {
+        row["mac_address"] for row in
+        conn.execute("SELECT mac_address FROM ports WHERE mac_address IS NOT NULL").fetchall()
+    }
+    for item in seen:
+        mac = item["mac"]
+        if mac in claimed:
+            # Already a real port's MAC -- clear out any stale pending row
+            # left over from before it was imported/linked.
+            conn.execute("DELETE FROM discovered_devices WHERE mac_address = ? AND status = 'pending'", (mac,))
+            continue
+        existing = conn.execute(
+            "SELECT id FROM discovered_devices WHERE mac_address = ?", (mac,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE discovered_devices SET pfsense_instance_id = ?, interface = ?, "
+                "dns_name = ?, ip_address = ?, last_seen = ? WHERE id = ?",
+                (instance_id, item["interface"], item["dns_name"], item["ip"], now, existing["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO discovered_devices "
+                "(mac_address, pfsense_instance_id, interface, dns_name, ip_address, "
+                " first_seen, last_seen, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+                (mac, instance_id, item["interface"], item["dns_name"], item["ip"], now, now),
+            )
+    conn.execute(
+        "UPDATE pfsense_instances SET last_sync_at = ?, last_sync_status = 'ok' WHERE id = ?",
+        (now, instance_id),
+    )
+
+
+def sync_due_pfsense_instances(conn):
+    """Syncs every enabled instance whose own poll_minutes interval has
+    elapsed since its last_sync_at (or that's never been synced yet).
+    Used by the background poller (see main.py); a failure on one
+    instance is logged and does not stop the rest."""
+    rows = conn.execute("SELECT * FROM pfsense_instances WHERE enabled = 1").fetchall()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        due = True
+        if row["last_sync_at"]:
+            try:
+                last = datetime.fromisoformat(row["last_sync_at"])
+                due = (now - last).total_seconds() >= row["poll_minutes"] * 60
+            except ValueError:
+                due = True
+        if not due:
+            continue
+        try:
+            sync_pfsense_instance(conn, row["id"])
+        except pfsense.PfsenseError as e:
+            log.warning(f"pfSense sync failed for instance {row['id']} ({row['name']}): {e}")
+
+
+# ---------------------------------------------------------------------------
+# Discovered devices -- the discovery staging list fed by the syncs above.
+# ---------------------------------------------------------------------------
+
+def list_discovered_devices(conn, status: str | None = "pending", instance_id: int | None = None):
+    query = (
+        "SELECT dd.*, pi.name AS instance_name, pi.site AS site "
+        "FROM discovered_devices dd JOIN pfsense_instances pi ON pi.id = dd.pfsense_instance_id "
+        "WHERE 1=1"
+    )
+    params = []
+    if status:
+        query += " AND dd.status = ?"
+        params.append(status)
+    if instance_id:
+        query += " AND dd.pfsense_instance_id = ?"
+        params.append(instance_id)
+    query += " ORDER BY dd.last_seen DESC"
+    return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+def get_discovered_device(conn, discovered_id: int):
+    row = conn.execute("SELECT * FROM discovered_devices WHERE id = ?", (discovered_id,)).fetchone()
+    if not row:
+        raise NotFoundError(f"discovered device {discovered_id} not found")
+    return dict(row)
+
+
+def ignore_discovered(conn, discovered_id: int):
+    get_discovered_device(conn, discovered_id)
+    conn.execute("UPDATE discovered_devices SET status = 'ignored' WHERE id = ?", (discovered_id,))
+    return get_discovered_device(conn, discovered_id)
+
+
+def import_discovered(conn, discovered_id: int, name: str, role: str = "", model: str = "",
+                       site: str | None = None, notes: str = ""):
+    """Creates a new device + a single port named "eth0", pre-filling
+    site from the discovered device's own pfSense instance when the
+    caller doesn't override it, and sets that port's MAC to the
+    discovered MAC. IP/DNS name are not carried over -- LinkLedger
+    doesn't track L3."""
+    disc = get_discovered_device(conn, discovered_id)
+    if disc["status"] != "pending":
+        raise ConflictError("this discovered device has already been resolved")
+    if site is None:
+        instance = get_pfsense_instance(conn, disc["pfsense_instance_id"])
+        site = instance["site"]
+    device = create_device(conn, name=name, role=role, model=model, site=site, notes=notes)
+    port = create_port(conn, device["id"], name="eth0")
+    update_port(conn, port["id"], mac_address=disc["mac_address"])
+    conn.execute("UPDATE discovered_devices SET status = 'imported' WHERE id = ?", (discovered_id,))
+    return get_device(conn, device["id"])
+
+
+def link_discovered(conn, discovered_id: int, port_id: int):
+    """Attaches the discovered MAC to an existing port instead of
+    creating a new device."""
+    disc = get_discovered_device(conn, discovered_id)
+    if disc["status"] != "pending":
+        raise ConflictError("this discovered device has already been resolved")
+    update_port(conn, port_id, mac_address=disc["mac_address"])
+    conn.execute("UPDATE discovered_devices SET status = 'imported' WHERE id = ?", (discovered_id,))
+    return get_port(conn, port_id)
