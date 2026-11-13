@@ -367,7 +367,7 @@ async function loadPfsenseInterfacesInto(id) {
       interfaces.map(iface => `
         <label class="checkbox-field" style="display:flex; margin-bottom:4px;">
           <input type="checkbox" class="pfIfaceCheckbox" value="${esc(iface.name)}" ${PFSENSE_EDIT_SELECTED.has(iface.name) ? "checked" : ""}
-            onchange="togglePfsenseInterface(${JSON.stringify(iface.name)}, this.checked)">
+            onchange="togglePfsenseInterface(this.value, this.checked)">
           ${esc(iface.label)}
         </label>`).join("");
   } catch (e) {
