@@ -94,30 +94,38 @@ def list_interfaces(instance: dict) -> list[dict]:
 
 def _interface_name_map(instance: dict) -> dict:
     """Maps every representation pfSense might use to identify an
-    interface -- the raw ifname (e.g. "lagg0.10"), the *assigned
-    interface's* own description (e.g. "OPT1 (Workstations)", from
-    /api/v2/interfaces), and -- confirmed against a real instance to be
-    the actual gap -- a VLAN's *own* separate description (e.g.
-    "10_WORKSTATIONS", from /api/v2/interface/vlans, RESTAPI\\Models\\
-    InterfaceVLAN: if/tag/descr/vlanif) -- to the canonical raw ifname
-    that instance["selected_interfaces"] stores (the same value
-    list_interfaces() offers as a checkbox's value).
+    interface to the canonical raw ifname that
+    instance["selected_interfaces"] stores (the same value
+    list_interfaces() offers as a checkbox's value): the raw ifname itself
+    (e.g. "lagg0.10"), the assigned interface's own `id` (e.g. "opt4"),
+    and its own `descr` (e.g. "10_workstations", from /api/v2/interfaces)
+    -- plus, for VLANs specifically, the VLAN object's own separate descr
+    (from /api/v2/interface/vlans, RESTAPI\\Models\\InterfaceVLAN), kept
+    as a second, independent source since it's a genuinely different
+    field a user could have set differently.
 
-    These are two genuinely independent, independently-settable fields on
-    two separate pfSense models (an assigned interface's own descr vs.
-    the VLAN object's own descr for the VLAN it was created from), not
-    one shared value -- a user can (and, in the field, does) name a VLAN
-    "10_WORKSTATIONS" under Interfaces > VLANs while its interface
-    assignment under Interfaces > Assignments keeps a different
-    descr/no custom descr. pfSense's own ARP table reports the VLAN's own
-    description for tagged traffic, so both sources are merged here
-    rather than relying on just /api/v2/interfaces.
+    Confirmed against a real instance: pfSense's ARP table reports an
+    interface by its *assigned interface's own descr, forced to
+    UPPERCASE* ("10_workstations" in /api/v2/interfaces becomes
+    "10_WORKSTATIONS" in the ARP table) -- not by matching case, and not
+    by the VLAN's own separate descr at all. So every key this function
+    adds is normalized with .upper() at insertion, and every lookup
+    against this map must do the same (see describe_arp_interfaces() /
+    fetch_arp_and_leases() below) -- a case-sensitive match would silently
+    drop every VLAN whose descr isn't already all-caps, exactly like the
+    one already-uppercase "1_LAN" interface matched while every
+    lowercase-suffixed VLAN descr (the common case) silently didn't.
 
     Best-effort throughout: a PfsenseError fetching either endpoint just
     means that source contributes nothing to the map (the VLANs endpoint
     in particular may not exist on older package versions, or there may
     simply be no VLANs configured), rather than failing the whole sync."""
     name_map: dict[str, str] = {}
+
+    def add(key: str, target: str) -> None:
+        if key:
+            name_map[key.upper()] = target
+
     try:
         data = _get(instance, "/api/v2/interfaces")
         rows = data.get("data", data) if isinstance(data, dict) else data
@@ -125,13 +133,9 @@ def _interface_name_map(instance: dict) -> dict:
             raw = row.get("if") or row.get("name") or ""
             if not raw:
                 continue
-            name_map[raw] = raw
-            descr = row.get("descr") or row.get("description") or ""
-            if descr:
-                name_map[descr] = raw
-            ident = row.get("id") or ""
-            if ident:
-                name_map[ident] = raw
+            add(raw, raw)
+            add(row.get("descr") or row.get("description") or "", raw)
+            add(row.get("id") or "", raw)
     except PfsenseError:
         pass
     try:
@@ -146,13 +150,20 @@ def _interface_name_map(instance: dict) -> dict:
             vlanif = row.get("vlanif") or ""
             if not vlanif:
                 continue
-            name_map.setdefault(vlanif, vlanif)
-            descr = row.get("descr") or row.get("description") or ""
-            if descr:
-                name_map[descr] = vlanif
+            add(vlanif, vlanif)
+            add(row.get("descr") or row.get("description") or "", vlanif)
     except PfsenseError:
         pass
     return name_map
+
+
+def _translate_interface(name_map: dict, raw_iface: str) -> str:
+    """Looks up a raw ARP/interface value against _interface_name_map()'s
+    output case-insensitively (see that function's docstring for why --
+    pfSense's ARP table uppercases the assigned interface's descr before
+    reporting it). Falls back to the raw value unchanged when there's no
+    match, same as a plain dict.get() would."""
+    return name_map.get(raw_iface.upper(), raw_iface) if raw_iface else raw_iface
 
 
 def describe_arp_interfaces(instance: dict) -> dict:
@@ -164,18 +175,9 @@ def describe_arp_interfaces(instance: dict) -> dict:
     whenever a sync's matched count doesn't cover every selected
     interface, since that's exactly the situation where a translation
     gap (vs. "that interface genuinely has no traffic right now") needs
-    to be told apart -- e.g. if a VLAN sub-interface's *own* description
-    (set under Interfaces > VLANs) differs from its *assigned interface's*
-    description (set under Interfaces > Assignments, which is what
-    /api/v2/interfaces -- and thus _interface_name_map() -- actually
-    exposes), the raw value pfSense's ARP table reports for that VLAN
-    won't be a key in the map at all, and translation silently falls
-    back to passing the raw value through unchanged (see
-    _interface_name_map()'s "best-effort" fallback) -- which then can't
-    match a selected_interfaces entry that uses the *assignment's* name.
-    Best-effort: callers should treat a PfsenseError here as "couldn't
-    get a diagnosis" and fall back to a plain "ok", not as a sync
-    failure."""
+    to be told apart. Best-effort: callers should treat a PfsenseError
+    here as "couldn't get a diagnosis" and fall back to a plain "ok", not
+    as a sync failure."""
     name_map = _interface_name_map(instance)
     arp_data = _get(instance, "/api/v2/diagnostics/arp_table")
     arp_rows = arp_data.get("data", arp_data) if isinstance(arp_data, dict) else arp_data
@@ -185,7 +187,7 @@ def describe_arp_interfaces(instance: dict) -> dict:
         if raw_iface:
             raw_counts[raw_iface] = raw_counts.get(raw_iface, 0) + 1
     breakdown = [
-        {"raw": raw, "translated": name_map.get(raw, raw), "count": count}
+        {"raw": raw, "translated": _translate_interface(name_map, raw), "count": count}
         for raw, count in sorted(raw_counts.items())
     ]
     return {
@@ -204,33 +206,33 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
     user picks what they actually want).
 
     Joined by MAC: the ARP table (RESTAPI\\Models\\ARPTable: mac_address,
-    ip_address, interface, hostname) gives MAC+IP+interface for anything
+    ip_address, interface, dnsresolve) gives MAC+IP+interface for anything
     currently on the wire; DHCP leases (RESTAPI\\Models\\DHCPServerLease:
-    mac, ip, hostname, if) add a DNS name where one was handed out. A
-    statically-addressed device with no lease still comes through from
-    ARP alone -- using its own resolved hostname field, if any, before
-    falling back to the DHCP lease's.
+    mac, ip, hostname, descr, if) add a DNS name where one was handed
+    out. A statically-addressed device with no lease still comes through
+    from ARP alone -- using its own resolved name, if any, before falling
+    back to the DHCP lease's.
 
-    A lease's own `hostname` field only gets populated when the client
-    itself sends DHCP option 12 (client-hostname) -- plenty of real
-    devices (several Apple product lines historically, Android, most
-    IoT/embedded clients, and DHCPv6 clients in general) never send it,
-    so that field legitimately comes back blank even for a device with a
-    real, named lease. For a static DHCP mapping specifically, the
-    human-entered name lives in the lease's separate `descr` field
-    instead -- so that's included in the fallback chain too, below the
-    client-sent hostname but above nothing (an unnamed dynamic lease for
-    an option-12-silent client still has no name to show, which is
-    correct -- there isn't one to find).
+    Confirmed against a real instance: an ARP row's `hostname` field is
+    NOT a useful name at all -- it's always the literal placeholder
+    string "?", regardless of the device. The actual reverse-resolved
+    name (when pfSense has one) is in a differently-named field,
+    `dnsresolve`. `hostname` is deliberately never read here as a result
+    -- reading it was the original bug (every row silently got "?" as its
+    dns_name, which displays as truthy-but-useless rather than the clean
+    blank a real lack-of-name should show). A lease's own `hostname`
+    field is a different, legitimate field (populated only when the
+    client sends DHCP option 12, so plenty of real devices leave it
+    blank) and a static mapping's human-entered name lives in the lease's
+    `descr` instead -- both still used as fallbacks below `dnsresolve`.
 
     The ARP table's "interface" field is translated through
     _interface_name_map() before comparing against selected_interfaces --
-    confirmed against a real instance, pfSense can report that field as
-    the interface's *description* (e.g. "10_WORKSTATIONS") rather than
-    the raw ifname (e.g. "lagg0.10") the Settings picker's checkboxes use,
-    depending on the box's `represent_interfaces_as` REST API setting.
-    Without this translation every row silently fails to match and the
-    sync reports "ok" with zero devices.
+    confirmed against a real instance, pfSense reports that field as the
+    assigned interface's own description *forced to uppercase*, so the
+    translation (and lookup here) is case-insensitive; see
+    _interface_name_map()'s docstring. Without this translation every row
+    silently fails to match and the sync reports "ok" with zero devices.
     """
     import json as _json
 
@@ -254,7 +256,7 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
     out = []
     for row in arp_rows or []:
         raw_iface = row.get("interface") or row.get("if") or ""
-        iface = name_map.get(raw_iface, raw_iface)
+        iface = _translate_interface(name_map, raw_iface)
         if iface not in selected:
             continue
         mac = (row.get("mac_address") or row.get("mac") or "").strip().upper()
@@ -265,6 +267,6 @@ def fetch_arp_and_leases(instance: dict) -> list[dict]:
             "mac": mac,
             "interface": iface,
             "ip": row.get("ip_address") or row.get("ip") or "",
-            "dns_name": row.get("hostname") or lease.get("hostname") or lease.get("descr") or "",
+            "dns_name": row.get("dnsresolve") or lease.get("hostname") or lease.get("descr") or "",
         })
     return out
