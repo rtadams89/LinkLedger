@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LinkLedger — Help</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/theme.js"></script>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -12,16 +13,17 @@
   .help-wrap { max-width: 760px; margin: 0 auto; }
   .help-wrap h2 { font-size: 15px; margin: 28px 0 8px; }
   .help-wrap h2:first-of-type { margin-top: 0; }
-  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: #1e293b; }
+  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: var(--text); }
   .help-wrap ul { padding-left: 20px; margin: 6px 0; }
-  .help-wrap code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
-  .kbd-icon { display:inline-block; background:#f1f5f9; border:1px solid var(--border); border-radius:4px; padding:0 5px; font-size:12px; }
+  .help-wrap code { background: var(--bg-subtle); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .kbd-icon { display:inline-block; background:var(--bg-subtle); border:1px solid var(--border); border-radius:4px; padding:0 5px; font-size:12px; }
   .back-link { display:inline-block; margin-bottom: 16px; font-size: 13px; }
 </style>
 </head>
 <body>
 <div class="wrap help-wrap">
   <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <button class="btn small theme-toggle back-link" onclick="toggleTheme()" title="Toggle dark mode" style="float:right;"><span class="theme-icon-light">&#127769;</span><span class="theme-icon-dark">&#9728;&#65039;</span></button>
   <h1>LinkLedger <small>help</small></h1>
   <p class="sub">A quick reference for finding and editing connections.</p>
 

@@ -24,7 +24,7 @@ function esc(s) {
 function showToast(msg, isError) {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  t.style.background = isError ? "#dc2626" : "#0f172a";
+  t.style.background = isError ? "var(--danger-solid)" : "var(--ink-bg)";
   t.classList.add("show");
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove("show"), 2600);
@@ -60,7 +60,7 @@ function renderSitesList() {
     return;
   }
   box.innerHTML = SITES_CACHE.map(s => `
-    <div class="row-actions" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;">
+    <div class="row-actions" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">
       <span>${esc(s.name)}</span>
       <span class="row-actions">
         <button class="btn small" onclick='promptRenameSite(${s.id}, ${JSON.stringify(s.name).replace(/'/g, "&#39;")})'>Rename</button>
@@ -242,13 +242,13 @@ function renderPfsenseList() {
     let status;
     if (!inst.last_sync_at) status = "never synced yet";
     else if (inst.last_sync_status === "ok") status = `last synced ${esc(inst.last_sync_at)}`;
-    else status = `<span style="color:#dc2626;">${esc(inst.last_sync_status || "sync failed")}</span>`;
+    else status = `<span style="color:var(--danger);">${esc(inst.last_sync_status || "sync failed")}</span>`;
     return `
-    <div class="row-actions" style="justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9;">
+    <div class="row-actions" style="justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
       <span>
         <strong>${esc(inst.name)}</strong>${inst.site ? ` &middot; ${esc(inst.site)}` : ""}
-        ${inst.enabled ? "" : `<span style="color:#94a3b8;"> (disabled)</span>`}
-        <br><small style="color:#64748b;">${status}</small>
+        ${inst.enabled ? "" : `<span style="color:var(--border-strong);"> (disabled)</span>`}
+        <br><small style="color:var(--muted);">${status}</small>
       </span>
       <span class="row-actions">
         <button class="btn small" onclick="syncPfsenseNow(${inst.id})">Sync now</button>
@@ -339,7 +339,7 @@ async function testPfsenseEditor() {
   const resultEl = document.getElementById("pfsenseTestResult");
   if (!id) {
     resultEl.textContent = "Save this instance first, then test it.";
-    resultEl.style.color = "#dc2626";
+    resultEl.style.color = "var(--danger)";
     return;
   }
   resultEl.textContent = "Testing…";
@@ -347,11 +347,11 @@ async function testPfsenseEditor() {
   try {
     await api(`/api/settings/pfsense/${id}/test`, { method: "POST" });
     resultEl.textContent = "Connected";
-    resultEl.style.color = "#16a34a";
+    resultEl.style.color = "var(--tag-green-text)";
     await loadPfsenseInterfacesInto(id);
   } catch (e) {
     resultEl.textContent = e.message;
-    resultEl.style.color = "#dc2626";
+    resultEl.style.color = "var(--danger)";
   }
 }
 

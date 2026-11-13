@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LinkLedger — Tutorial</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/theme.js"></script>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -12,12 +13,12 @@
   .help-wrap { max-width: 820px; margin: 0 auto; }
   .help-wrap h2 { font-size: 15px; margin: 28px 0 8px; }
   .help-wrap h3 { font-size: 13.5px; margin: 20px 0 6px; }
-  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: #1e293b; }
+  .help-wrap p, .help-wrap li { font-size: 13.5px; line-height: 1.6; color: var(--text); }
   .help-wrap ul, .help-wrap ol { padding-left: 20px; margin: 6px 0; }
-  .help-wrap code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .help-wrap code { background: var(--bg-subtle); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
   .back-link { display:inline-block; margin-bottom: 16px; font-size: 13px; }
 
-  .part-banner { display:flex; align-items:center; gap:10px; background:var(--text); color:white;
+  .part-banner { display:flex; align-items:center; gap:10px; background:var(--ink-bg); color:white;
     padding:10px 16px; border-radius:10px; margin:34px 0 6px; font-size:14px; font-weight:700; }
   .part-banner:first-of-type { margin-top: 8px; }
   .part-banner .part-label { background:rgba(255,255,255,0.18); padding:2px 9px; border-radius:999px;
@@ -33,13 +34,13 @@
 
   figure.shot { margin: 10px 0 18px; }
   figure.shot img { max-width:100%; border:1px solid var(--border); border-radius:10px;
-    box-shadow:0 2px 10px rgba(15,23,42,0.06); display:block; }
+    box-shadow:var(--shadow-chip); display:block; }
   figure.shot figcaption { font-size:12px; color:var(--muted); margin-top:6px; font-style:italic; }
 
   .callout { border-radius:10px; padding:12px 16px; font-size:13px; margin:14px 0; }
-  .callout.tip { background:#eff6ff; color:#1e40af; }
-  .callout.note { background:#f1f5f9; color:#334155; }
-  .callout.warn { background:#fffbeb; color:#92400e; }
+  .callout.tip { background:var(--tag-sky-bg); color:var(--tag-sky-text); }
+  .callout.note { background:var(--bg-subtle); color:var(--slate); }
+  .callout.warn { background:var(--tag-yellow-bg); color:var(--tag-yellow-text); }
   .callout strong { display:block; margin-bottom:2px; }
 
   .sample-cta { display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--border);
@@ -54,6 +55,7 @@
 <body>
 <div class="wrap help-wrap">
   <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <button class="btn small theme-toggle back-link" onclick="toggleTheme()" title="Toggle dark mode" style="float:right;"><span class="theme-icon-light">&#127769;</span><span class="theme-icon-dark">&#9728;&#65039;</span></button>
   <h1>LinkLedger <small>tutorial</small></h1>
   <p class="sub">A hands-on walkthrough, from first login to every feature, using a
   made-up example network — none of this is your real data.</p>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LinkLedger — Settings</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/theme.js"></script>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -19,6 +20,7 @@
 
 <div class="wrap settings-wrap" id="settingsWrap" style="display:none;">
   <a class="btn small back-link" href="/">&larr; Back to LinkLedger</a>
+  <button class="btn small theme-toggle back-link" onclick="toggleTheme()" title="Toggle dark mode" style="float:right;"><span class="theme-icon-light">&#127769;</span><span class="theme-icon-dark">&#9728;&#65039;</span></button>
   <h1>LinkLedger <small>settings</small></h1>
   <p class="sub" id="whoamiLine">&nbsp;</p>
 
@@ -64,7 +66,7 @@
     <div id="pfsenseList"></div>
     <button class="btn primary" onclick="openPfsenseEditor(null)" style="margin-top:10px;">Add pfSense instance</button>
 
-    <div id="pfsenseEditor" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid #e2e8f0;">
+    <div id="pfsenseEditor" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
       <input type="hidden" id="pf_id">
       <div class="field"><label>Name</label><input type="text" id="pf_name" placeholder="Home pfSense"></div>
       <div class="field"><label>Site</label><select id="pf_site"><option value="">(none)</option></select></div>

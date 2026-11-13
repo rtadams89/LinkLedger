@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LinkLedger — Network Connection Tracker</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/theme.js"></script>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -33,6 +34,7 @@
     <div class="account-box">
       <span class="note" id="whoami"></span>
       <div class="account-actions">
+        <button class="btn small theme-toggle" onclick="toggleTheme()" title="Toggle dark mode"><span class="theme-icon-light">&#127769;</span><span class="theme-icon-dark">&#9728;&#65039;</span></button>
         <button class="btn small" onclick="location.href='/static/settings.html'">Settings</button>
         <button class="btn small" onclick="window.open('/static/help.html', '_blank')">Help</button>
         <button class="btn small" onclick="logout()">Log out</button>

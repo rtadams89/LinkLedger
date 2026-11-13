@@ -95,7 +95,7 @@ function applyRoleVisibility() {
 function showToast(msg, isError) {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  t.style.background = isError ? "#dc2626" : "#0f172a";
+  t.style.background = isError ? "var(--danger-solid)" : "var(--ink-bg)";
   t.classList.add("show");
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove("show"), 2600);
@@ -109,22 +109,26 @@ const VLAN_POE_CAPABLE_ROLES = ["Switch", "Router/Firewall"];
 // db.VIRTUAL_SWITCH_ROLES on the backend.
 const VIRTUAL_SWITCH_ROLES = ["AP Group", "Virtual Switch"];
 
+// Values are CSS var() references (not literal hex) so these colors stay
+// theme-aware -- see the --tag-*/--bg-subtle/--text token definitions in
+// style.css (light values in :root, dark values in the two dark-mode
+// blocks near the end of that file).
 const ROLE_COLORS = {
-  "Switch": "#dcfce7", "Patch Panel": "#f1f5f9", "Router/Firewall": "#ffedd5",
-  "Hypervisor": "#f3e8ff", "NAS": "#fef9c3", "Client": "#dbeafe", "Server": "#e0e7ff",
-  "Access Point": "#dbeafe", "Appliance": "#dbeafe",
-  "AP Group": "#cffafe", "Virtual Switch": "#e0f2fe", "Internet": "#f1f5f9",
+  "Switch": "var(--tag-green-bg)", "Patch Panel": "var(--bg-subtle)", "Router/Firewall": "var(--tag-orange-bg)",
+  "Hypervisor": "var(--tag-purple-bg)", "NAS": "var(--tag-yellow-bg)", "Client": "var(--tag-sky-bg)", "Server": "var(--tag-indigo-bg)",
+  "Access Point": "var(--tag-sky-bg)", "Appliance": "var(--tag-sky-bg)",
+  "AP Group": "var(--tag-teal-bg)", "Virtual Switch": "var(--tag-cyan-bg)", "Internet": "var(--bg-subtle)",
 };
 const ROLE_TEXT = {
-  "Switch": "#15803d", "Patch Panel": "#334155", "Router/Firewall": "#c2410c",
-  "Hypervisor": "#6b21a8", "NAS": "#a16207", "Client": "#1e40af", "Server": "#4338ca",
-  "Access Point": "#1e40af", "Appliance": "#1e40af",
-  "AP Group": "#0e7490", "Virtual Switch": "#0369a1", "Internet": "#0f172a",
+  "Switch": "var(--tag-green-text)", "Patch Panel": "var(--slate)", "Router/Firewall": "var(--tag-orange-text)",
+  "Hypervisor": "var(--tag-purple-text)", "NAS": "var(--tag-yellow-text)", "Client": "var(--tag-sky-text)", "Server": "var(--tag-indigo-text)",
+  "Access Point": "var(--tag-sky-text)", "Appliance": "var(--tag-sky-text)",
+  "AP Group": "var(--tag-teal-text)", "Virtual Switch": "var(--tag-cyan-text)", "Internet": "var(--text)",
 };
 function roleBadge(role) {
   if (!role) return "";
-  const bg = ROLE_COLORS[role] || "#e2e8f0";
-  const fg = ROLE_TEXT[role] || "#334155";
+  const bg = ROLE_COLORS[role] || "var(--border)";
+  const fg = ROLE_TEXT[role] || "var(--slate)";
   return `<span class="tag" style="background:${bg};color:${fg}">${esc(role)}</span>`;
 }
 function esc(s) {
@@ -335,7 +339,7 @@ function lagTag(lagName) {
 
 function macTag(mac) {
   if (!mac) return "";
-  return `<span class="tag" style="background:#f1f5f9;color:#475569;font-family:monospace;">${esc(mac)}</span>`;
+  return `<span class="tag" style="background:var(--bg-subtle);color:var(--slate-strong);font-family:monospace;">${esc(mac)}</span>`;
 }
 
 // Shown on a port that belongs to a device flagged as needing PoE --
@@ -765,7 +769,7 @@ async function submitFindPath() {
       <div class="card">
         <div class="path-summary">
           ${speedTag(p.overall_speed) || `<span class="note">Speed not tagged along this path</span>`}
-          ${p.routed_via_router ? `<span class="tag" style="background:#ffedd5;color:#c2410c;">Routes through a Router/Firewall</span>` : `<span class="tag" style="background:#dcfce7;color:#15803d;">Direct switch path -- no router hop</span>`}
+          ${p.routed_via_router ? `<span class="tag" style="background:var(--tag-orange-bg);color:var(--tag-orange-text);">Routes through a Router/Firewall</span>` : `<span class="tag" style="background:var(--tag-green-bg);color:var(--tag-green-text);">Direct switch path -- no router hop</span>`}
           <button class="btn small" onclick="showPathOnMap()">Show on map</button>
         </div>
         <div class="vlan-note ${vlanClass}">${esc(p.vlan_note.detail)}</div>
@@ -1018,8 +1022,8 @@ function mapPositionStatus(pos, cabled) {
 function mapNodeBoxSVG(dev) {
   const box = MAP_NODE_BOX[dev.id];
   const origin = MAP_NODE_ORIGIN[dev.id];
-  const bg = ROLE_COLORS[dev.role] || "#e2e8f0";
-  const fg = ROLE_TEXT[dev.role] || "#334155";
+  const bg = ROLE_COLORS[dev.role] || "var(--border)";
+  const fg = ROLE_TEXT[dev.role] || "var(--slate)";
   const hl = MAP_HIGHLIGHT;
   const nodeHL = !!(hl && hl.deviceIds.has(dev.id));
   // A normally-hidden device only ever reaches this function when it's
@@ -1028,7 +1032,7 @@ function mapNodeBoxSVG(dev) {
   const isHidden = !dev.show_on_map;
   const draggable = isAdmin() ? " map-node-draggable" : "";
   return `<g class="map-node${draggable}${nodeHL ? " map-node-hl" : ""}${isHidden ? " map-node-hidden" : ""}" id="mapNode-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">
-    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "#2563eb" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}" stroke-dasharray="${isHidden ? "4 2" : "none"}"></rect>
+    <rect class="map-node-rect" x="0" y="0" width="${box.width}" height="${box.height}" rx="8" fill="${bg}" stroke="${nodeHL ? "var(--blue-strong)" : fg}" stroke-width="${nodeHL ? 2.5 : 1.3}" stroke-dasharray="${isHidden ? "4 2" : "none"}"></rect>
     <text class="map-node-label" x="${box.width / 2}" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="${fg}">${esc(dev.name)}${isHidden ? " (hidden)" : ""}</text>
   </g>`;
 }
@@ -1039,10 +1043,10 @@ function mapNodeJacksSVG(dev) {
   const hl = MAP_HIGHLIGHT;
   const jacks = box.positions.map(pos => {
     const status = mapPositionStatus(pos, MAP_CABLED_PORTS);
-    const fill = status === "full" ? "#22c55e" : status === "partial" ? "#f59e0b" : "#cbd5e1";
+    const fill = status === "full" ? "var(--status-ok)" : status === "partial" ? "var(--status-partial)" : "var(--muted-light)";
     const ids = pos.ports.map(p => p.id).join(",");
     const isHL = !!(hl && pos.ports.some(p => hl.jackKeys.has(p.id)));
-    return `<circle class="map-jack${isHL ? " map-jack-hl" : ""}" data-dev="${dev.id}" data-ports="${ids}" cx="${pos.x}" cy="${pos.y}" r="${MAP_JACK_R}" fill="${fill}" stroke="${isHL ? "#2563eb" : "#fff"}" stroke-width="${isHL ? 2.5 : 1}"><title>${esc(pos.ports.map(p => p.name).join(" / "))}</title></circle>`;
+    return `<circle class="map-jack${isHL ? " map-jack-hl" : ""}" data-dev="${dev.id}" data-ports="${ids}" cx="${pos.x}" cy="${pos.y}" r="${MAP_JACK_R}" fill="${fill}" stroke="${isHL ? "var(--blue-strong)" : "var(--card)"}" stroke-width="${isHL ? 2.5 : 1}"><title>${esc(pos.ports.map(p => p.name).join(" / "))}</title></circle>`;
   }).join("");
   return `<g class="map-node-jacks" id="mapNodeJacks-${dev.id}" data-device-id="${dev.id}" transform="translate(${origin.x},${origin.y})">${jacks}</g>`;
 }
@@ -1434,7 +1438,7 @@ function mapHitSplit(points, aBox, bBox) {
 function mapCableSVG(c, points, highlighted) {
   if (!points || points.length < 2) return "";
   const d = mapPolylinePath(points);
-  const stroke = highlighted ? "#2563eb" : "#94a3b8";
+  const stroke = highlighted ? "var(--blue-strong)" : "var(--border-strong)";
   const width = highlighted ? 3 : 1.6;
   const aOrigin = MAP_NODE_ORIGIN[c.a_device_id], aBoxDim = MAP_NODE_BOX[c.a_device_id];
   const bOrigin = MAP_NODE_ORIGIN[c.b_device_id], bBoxDim = MAP_NODE_BOX[c.b_device_id];
@@ -1482,7 +1486,7 @@ function mapCollectVLinks(devices) {
 function mapVLinkSVG(vl, points, highlighted) {
   if (!points || points.length < 2) return "";
   const d = mapPolylinePath(points);
-  const stroke = highlighted ? "#2563eb" : "#94a3b8";
+  const stroke = highlighted ? "var(--blue-strong)" : "var(--border-strong)";
   const aOrigin = MAP_NODE_ORIGIN[vl.device_id], aBoxDim = MAP_NODE_BOX[vl.device_id];
   const bOrigin = MAP_NODE_ORIGIN[vl.vs_id], bBoxDim = MAP_NODE_BOX[vl.vs_id];
   const aBox = aOrigin && aBoxDim ? { origin: aOrigin, box: aBoxDim } : null;
@@ -1972,9 +1976,9 @@ function mapShellHTML() {
       <div class="map-popover" id="mapPopover" style="display:none;"></div>
     </div>
     <div class="map-legend">
-      <span><span class="map-legend-dot" style="background:#22c55e"></span>Connected</span>
-      <span><span class="map-legend-dot" style="background:#f59e0b"></span>Patch panel: one side only</span>
-      <span><span class="map-legend-dot" style="background:#cbd5e1"></span>Not connected</span>
+      <span><span class="map-legend-dot" style="background:var(--status-ok)"></span>Connected</span>
+      <span><span class="map-legend-dot" style="background:var(--status-partial)"></span>Patch panel: one side only</span>
+      <span><span class="map-legend-dot" style="background:var(--muted-light)"></span>Not connected</span>
       <span class="note">Solid = cable &middot; Dashed = wireless/virtual link</span>
       <span class="note">Dashed outline = normally-hidden device shown because it's on a highlighted path</span>
     </div>
@@ -2405,7 +2409,7 @@ function reportSection(key, title, note, count, bodyHtml) {
     <details class="card report-card" data-report="${esc(key)}">
       <summary class="device-header">
         <strong>${esc(title)}</strong>
-        <span class="tag" style="background:${count ? "#fef2f2" : "#dcfce7"}; color:${count ? "#b91c1c" : "#15803d"};">${count}</span>
+        <span class="tag" style="background:${count ? "var(--tag-red-bg)" : "var(--tag-green-bg)"}; color:${count ? "var(--tag-red-text)" : "var(--tag-green-text)"};">${count}</span>
       </summary>
       <p class="note" style="margin:10px 0 10px;">${note}</p>
       ${count === 0 ? `<div class="empty-state">Nothing to report here.</div>` : bodyHtml}

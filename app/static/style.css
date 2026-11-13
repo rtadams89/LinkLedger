@@ -1,6 +1,43 @@
 :root {
   --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
   --blue: #3b82f6; --danger: #dc2626;
+  /* Dark-mode-aware tokens added alongside the original set above. Each
+     has a light value here and a dark value in the two blocks at the
+     bottom of this file (@media (prefers-color-scheme: dark) for "auto"
+     and :root[data-theme="dark"] for the explicit manual override). */
+  --danger-solid: #dc2626;      /* solid bg + white text (toast); stays dark/saturated in both themes for contrast */
+  --ink-bg: #0f172a;            /* solid dark surface for buttons/tabs/toast that always pair with white text */
+  --bg-subtle: #f1f5f9;         /* faint panel/hover/code background, one step lighter than --border */
+  --muted-light: #cbd5e1;       /* faint icon/empty-state color, lighter than --muted */
+  --border-strong: #94a3b8;     /* more visible border/stroke than --border */
+  --blue-strong: #2563eb;       /* emphasis stroke (map highlight/hover), stronger than --blue */
+  --slate: #334155;             /* dark-slate text, used on neutral badge backgrounds */
+  --slate-strong: #475569;      /* slightly lighter slate text */
+  --status-ok: #22c55e;
+  --status-partial: #f59e0b;
+  --shadow-sm: 0 8px 24px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.14);
+  --shadow-chip: 0 1px 2px rgba(15,23,42,0.08);
+  --modal-backdrop: rgba(15,23,42,0.4);
+  --focus-ring: rgba(59,130,246,0.15);
+  --port-hl-start: rgba(59,130,246,0.35);
+  --port-hl-end: rgba(59,130,246,0.14);
+  /* Pastel badge/tag color pairs -- bg + text -- shared by style.css
+     classes (.poe-tag, .vlan-tag, .lag-tag, .speed-tag, .vlan-note-*) and
+     the inline colors app.js generates for ROLE_COLORS/ROLE_TEXT, the MAC
+     tag, the routed-via-router tags, and the discovery-count tags, so all
+     of them stay in sync and theme-aware from one definition. */
+  --tag-red-bg: #fef2f2;      --tag-red-text: #b91c1c;
+  --tag-green-bg: #dcfce7;    --tag-green-text: #15803d;
+  --tag-orange-bg: #ffedd5;   --tag-orange-text: #c2410c;
+  --tag-yellow-bg: #fef9c3;   --tag-yellow-text: #a16207;
+  --tag-violet-bg: #ede9fe;   --tag-violet-text: #6d28d9;
+  --tag-purple-bg: #f3e8ff;   --tag-purple-text: #6b21a8;
+  --tag-magenta-bg: #fae8ff;  --tag-magenta-text: #a21caf;
+  --tag-cyan-bg: #e0f2fe;     --tag-cyan-text: #0369a1;
+  --tag-sky-bg: #dbeafe;      --tag-sky-text: #1e40af;
+  --tag-indigo-bg: #e0e7ff;   --tag-indigo-text: #4338ca;
+  --tag-teal-bg: #cffafe;     --tag-teal-text: #0e7490;
 }
 * { box-sizing: border-box; }
 body { margin:0; padding:24px; background:var(--bg); font-family: Inter, system-ui, -apple-system, sans-serif; color:var(--text); }
@@ -9,26 +46,26 @@ h1 { font-size:20px; margin:0 0 4px; }
 h1 small { font-weight: 400; color: var(--muted); font-size: 13px; }
 p.sub { margin:0 0 20px; color:var(--muted); font-size:13px; }
 .searchbar { position:relative; margin-bottom:16px; display:flex; gap:8px; }
-input[type=text], input[type=number], input[type=password], select { padding:10px 12px; font-size:14px; border:1px solid var(--border); border-radius:8px; outline:none; background:white; font-family: inherit; }
+input[type=text], input[type=number], input[type=password], select { padding:10px 12px; font-size:14px; border:1px solid var(--border); border-radius:8px; outline:none; background:var(--card); color:var(--text); font-family: inherit; }
 .searchbar input[type=text] { width:100%; padding:12px 14px; font-size:15px; border-radius:10px; }
-input:focus, select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(59,130,246,0.15); }
+input:focus, select:focus { border-color:var(--blue); box-shadow:0 0 0 3px var(--focus-ring); }
 select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .autocomplete { position:relative; }
-.results { position:absolute; top:calc(100% + 4px); left:0; right:0; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.08); max-height:320px; overflow:auto; z-index:20; display:none; }
+.results { position:absolute; top:calc(100% + 4px); left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-sm); max-height:320px; overflow:auto; z-index:20; display:none; }
 .results.show { display:block; }
 /* A wider dropdown for narrow fields (e.g. Path finder's Device A/B pickers). */
 .results.wide { min-width:420px; }
 /* .result-item and .device-chip below are real <a href> links; reset the
    browser's default anchor styling so they look like plain clickable rows/chips. */
-.result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; color:inherit; text-decoration:none; }
-.result-item:hover { background:#f8fafc; }
+.result-item { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border); color:inherit; text-decoration:none; }
+.result-item:hover { background:var(--bg); }
 /* Wraps a name too long for the row onto a second line instead of
    horizontal scroll. min-width:0 lets the flex item shrink/wrap. */
 .result-item span:first-child { overflow-wrap:anywhere; min-width:0; }
 .tag { font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; white-space:nowrap; }
 .tabs { display:flex; gap:8px; margin-bottom:16px; }
-.tab-btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; color:var(--muted); }
-.tab-btn.active { background:var(--text); color:white; border-color:var(--text); }
+.tab-btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--card); cursor:pointer; font-size:13px; color:var(--muted); }
+.tab-btn.active { background:var(--ink-bg); color:white; border-color:var(--ink-bg); }
 /* Truncates the Device tab's label instead of stretching the tab row. */
 #tabDevice { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; }
 .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
@@ -52,7 +89,7 @@ select:disabled { background:var(--bg); color:var(--muted); cursor:default; }
 .report-card[open] > summary::before { transform:rotate(90deg); }
 table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
 th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid var(--border); }
-td { padding:8px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
 tr:last-child td { border-bottom:none; }
 /* Alternating row shading. Targets td (not tr) so a header row, always
    <th>, is never shaded. */
@@ -61,8 +98,8 @@ tr:nth-child(even) td { background:var(--bg); }
 /* Highlights a port linked to from elsewhere (see highlightPorts() in
    app.js): a bright flash that settles into a lingering tint. */
 @keyframes portHighlightFade {
-  0% { background:rgba(59,130,246,0.35); }
-  100% { background:rgba(59,130,246,0.14); }
+  0% { background:var(--port-hl-start); }
+  100% { background:var(--port-hl-end); }
 }
 .port-highlight { animation:portHighlightFade 2.2s ease-out forwards; }
 
@@ -72,10 +109,10 @@ tr:nth-child(even) td { background:var(--bg); }
 a.link { color:var(--blue); text-decoration:none; font-weight:600; cursor:pointer; }
 a.link:hover { text-decoration:underline; }
 .chain .via { color:var(--muted); font-size:11px; }
-.arrow { color:#cbd5e1; }
-.unused { color:#cbd5e1; font-style:italic; font-size:12px; }
+.arrow { color:var(--muted-light); }
+.unused { color:var(--muted-light); font-style:italic; font-size:12px; }
 .device-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
-.device-chip { display:block; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; text-align:left; max-width:100%; overflow:hidden; color:inherit; text-decoration:none; }
+.device-chip { display:block; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--card); cursor:pointer; font-size:13px; font-weight:600; text-align:left; max-width:100%; overflow:hidden; color:inherit; text-decoration:none; }
 .device-chip:hover { border-color:var(--blue); }
 .device-chip .chip-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .device-chip .role { display:block; font-weight:400; color:var(--muted); font-size:11px; margin-top:2px; }
@@ -85,26 +122,26 @@ a.link:hover { text-decoration:underline; }
 .device-header h2 { overflow-wrap:anywhere; }
 .chain, .path-hop-device, td, .via { overflow-wrap:anywhere; }
 .empty-state { text-align:center; color:var(--muted); padding:40px 20px; font-size:14px; }
-button.btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:white; cursor:pointer; font-size:13px; font-weight:600; color:var(--text); }
+button.btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--card); cursor:pointer; font-size:13px; font-weight:600; color:var(--text); }
 button.btn:hover { border-color:var(--blue); color:var(--blue); }
-button.btn.primary { background:var(--text); color:white; border-color:var(--text); }
+button.btn.primary { background:var(--ink-bg); color:white; border-color:var(--ink-bg); }
 button.btn.primary:hover { opacity:0.9; color:white; }
 button.btn.danger { color:var(--danger); }
 button.btn.danger:hover { border-color:var(--danger); }
 button.btn.small { padding:4px 10px; font-size:12px; }
 button.icon-btn { background:none; border:none; cursor:pointer; color:var(--muted); font-size:14px; padding:2px 6px; border-radius:4px; }
-button.icon-btn:hover { background:#f1f5f9; color:var(--danger); }
+button.icon-btn:hover { background:var(--bg-subtle); color:var(--danger); }
 .row-actions { display:flex; gap:4px; align-items:center; }
-.modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,0.4); display:flex; align-items:center; justify-content:center; z-index:100; }
-.modal { background:white; border-radius:12px; padding:24px; width:420px; max-width:90vw; max-height:85vh; overflow:auto; }
+.modal-backdrop { position:fixed; inset:0; background:var(--modal-backdrop); display:flex; align-items:center; justify-content:center; z-index:100; }
+.modal { background:var(--card); border-radius:12px; padding:24px; width:420px; max-width:90vw; max-height:85vh; overflow:auto; }
 .modal.modal-wide { width:780px; }
 .modal h3 { margin:0 0 16px; font-size:16px; }
 .field { margin-bottom:12px; }
 .field label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
 .field input, .field select { width:100%; }
 .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
-.error-msg { background:#fef2f2; color:#b91c1c; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:12px; }
-.toast { position:fixed; bottom:20px; right:20px; background:var(--text); color:white; padding:10px 16px; border-radius:8px; font-size:13px; z-index:200; opacity:0; transition:opacity 0.2s; }
+.error-msg { background:var(--tag-red-bg); color:var(--tag-red-text); padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:12px; }
+.toast { position:fixed; bottom:20px; right:20px; background:var(--ink-bg); color:white; padding:10px 16px; border-radius:8px; font-size:13px; z-index:200; opacity:0; transition:opacity 0.2s; }
 .toast.show { opacity:1; }
 .note { color: var(--muted); font-size: 12px; font-style: italic; }
 .note a.link { font-style: normal; }
@@ -112,7 +149,7 @@ button.icon-btn:hover { background:#f1f5f9; color:var(--danger); }
 /* Edit port layout (free-form per-device port grid) -- see
    openPortLayoutModal in app.js. */
 .pl-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
-.pl-canvas-wrap { border:1px solid var(--border); border-radius:8px; overflow:auto; max-height:50vh; background:#f8fafc; }
+.pl-canvas-wrap { border:1px solid var(--border); border-radius:8px; overflow:auto; max-height:50vh; background:var(--bg); }
 .pl-canvas {
   position:relative;
   background-image:
@@ -122,16 +159,16 @@ button.icon-btn:hover { background:#f1f5f9; color:var(--danger); }
 }
 .pl-chip {
   position:absolute; box-sizing:border-box; display:flex; align-items:center; justify-content:center;
-  background:white; border:1.5px solid #94a3b8; border-radius:6px; font-size:11px; font-weight:600;
+  background:var(--card); border:1.5px solid var(--border-strong); border-radius:6px; font-size:11px; font-weight:600;
   color:var(--text); cursor:grab; user-select:none; padding:2px; overflow:hidden; text-align:center;
-  box-shadow:0 1px 2px rgba(15,23,42,0.08);
+  box-shadow:var(--shadow-chip);
 }
 .pl-chip:active { cursor:grabbing; }
-.speed-tag { background:#e0f2fe; color:#0369a1; font-weight:600; margin-left:6px; }
-.vlan-tag { background:#fae8ff; color:#a21caf; font-weight:600; margin-left:6px; }
+.speed-tag { background:var(--tag-cyan-bg); color:var(--tag-cyan-text); font-weight:600; margin-left:6px; }
+.vlan-tag { background:var(--tag-magenta-bg); color:var(--tag-magenta-text); font-weight:600; margin-left:6px; }
 .footer { margin-top:28px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; text-align:center; }
 .footer a { color:var(--muted); cursor:pointer; text-decoration:underline; }
-table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+table code { background:var(--bg-subtle); padding:1px 5px; border-radius:4px; }
 
 .admin-only { display:none; }
 .topbar { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
@@ -148,21 +185,21 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
 .checkbox-field label { display:flex; align-items:center; gap:6px; font-weight:600; color:var(--text); cursor:pointer; margin-bottom:8px; }
 .checkbox-field input[type=checkbox], .checkbox-field input[type=radio] { width:auto; flex:none; }
 
-.poe-tag { background:#fef9c3; color:#a16207; font-weight:600; margin-left:6px; }
-.poe-tag-ok { background:#dcfce7; color:#15803d; font-weight:600; margin-left:6px; }
-.poe-tag-warn { background:#fef2f2; color:#b91c1c; font-weight:600; margin-left:6px; }
-.lag-tag { background:#ede9fe; color:#6d28d9; font-weight:600; margin-left:6px; }
+.poe-tag { background:var(--tag-yellow-bg); color:var(--tag-yellow-text); font-weight:600; margin-left:6px; }
+.poe-tag-ok { background:var(--tag-green-bg); color:var(--tag-green-text); font-weight:600; margin-left:6px; }
+.poe-tag-warn { background:var(--tag-red-bg); color:var(--tag-red-text); font-weight:600; margin-left:6px; }
+.lag-tag { background:var(--tag-violet-bg); color:var(--tag-violet-text); font-weight:600; margin-left:6px; }
 
-.path-hop { padding:10px 14px; border:1px solid var(--border); border-radius:10px; background:#f8fafc; }
+.path-hop { padding:10px 14px; border:1px solid var(--border); border-radius:10px; background:var(--bg); }
 .path-hop-device { font-weight:700; font-size:14px; }
 .path-hop-port { font-family: ui-monospace, monospace; font-size:12px; color:var(--muted); margin-top:2px; }
-.path-arrow { text-align:center; color:#cbd5e1; font-size:16px; padding:4px 0; }
+.path-arrow { text-align:center; color:var(--muted-light); font-size:16px; padding:4px 0; }
 .path-chain { display:flex; flex-direction:column; gap:2px; margin-top:12px; }
 .path-summary { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
 .vlan-note { padding:8px 12px; border-radius:8px; font-size:12.5px; margin-bottom:4px; }
-.vlan-note-same { background:#dcfce7; color:#15803d; }
-.vlan-note-diff { background:#ffedd5; color:#c2410c; }
-.vlan-note-unknown { background:#f1f5f9; color:var(--muted); }
+.vlan-note-same { background:var(--tag-green-bg); color:var(--tag-green-text); }
+.vlan-note-diff { background:var(--tag-orange-bg); color:var(--tag-orange-text); }
+.vlan-note-unknown { background:var(--bg-subtle); color:var(--muted); }
 
 /* Map tab -- SVG network diagram (see renderMapView() in app.js). */
 .map-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
@@ -170,8 +207,8 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
 .map-canvas-wrap {
   position:relative; border:1px solid var(--border); border-radius:10px; overflow:hidden;
   background:
-    linear-gradient(90deg, #f1f5f9 1px, transparent 1px) 0 0/24px 24px,
-    linear-gradient(#f1f5f9 1px, transparent 1px) 0 0/24px 24px, #fbfcfe;
+    linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0/24px 24px,
+    linear-gradient(var(--border) 1px, transparent 1px) 0 0/24px 24px, var(--bg);
 }
 #mapSvg { display:block; cursor:grab; touch-action:none; }
 #mapSvg:active { cursor:grabbing; }
@@ -183,15 +220,97 @@ table code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
    beats the element's own stroke="..." attribute regardless of order,
    since presentation attributes sit below author stylesheets in the
    cascade, so no !important is needed here. */
-.map-edge.map-line-hover .map-edge-line { stroke:#2563eb; stroke-width:3; }
-.map-vlink.map-line-hover .map-vlink-line { stroke:#2563eb; stroke-width:2.4; }
-.map-popover { position:absolute; background:white; border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.14); padding:10px 12px; font-size:12px; max-width:260px; z-index:30; }
+.map-edge.map-line-hover .map-edge-line { stroke:var(--blue-strong); stroke-width:3; }
+.map-vlink.map-line-hover .map-vlink-line { stroke:var(--blue-strong); stroke-width:2.4; }
+.map-popover { position:absolute; background:var(--card); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-lg); padding:10px 12px; font-size:12px; max-width:260px; z-index:30; }
 .map-pop-title { font-weight:700; margin-bottom:6px; }
 .map-pop-row { margin-bottom:6px; }
 .map-pop-row:last-child { margin-bottom:0; }
 .map-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--muted); margin-top:10px; align-items:center; }
 .map-legend-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
 .map-node-hidden { opacity:0.55; }
+
+/* Dark mode -- auto: the browser/OS prefers dark and the user hasn't
+   explicitly forced light via the toggle (data-theme="light" is set by
+   app.js when they do, see THEME_KEY in app.js). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --blue: #60a5fa; --danger: #f87171;
+    --ink-bg: #475569;
+    --bg-subtle: #243344;
+    --muted-light: #475569;
+    --border-strong: #64748b;
+    --blue-strong: #60a5fa;
+    --slate: #cbd5e1;
+    --slate-strong: #94a3b8;
+    --status-ok: #4ade80;
+    --status-partial: #fbbf24;
+    --shadow-sm: 0 8px 24px rgba(0,0,0,0.5);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+    --shadow-chip: 0 1px 3px rgba(0,0,0,0.4);
+    --modal-backdrop: rgba(0,0,0,0.6);
+    --focus-ring: rgba(96,165,250,0.25);
+    --port-hl-start: rgba(96,165,250,0.4);
+    --port-hl-end: rgba(96,165,250,0.16);
+    --tag-red-bg: #450a0a;      --tag-red-text: #fca5a5;
+    --tag-green-bg: #052e16;    --tag-green-text: #86efac;
+    --tag-orange-bg: #431407;   --tag-orange-text: #fdba74;
+    --tag-yellow-bg: #422006;   --tag-yellow-text: #fde047;
+    --tag-violet-bg: #2e1065;   --tag-violet-text: #c4b5fd;
+    --tag-purple-bg: #3b0764;   --tag-purple-text: #d8b4fe;
+    --tag-magenta-bg: #4a044e;  --tag-magenta-text: #f0abfc;
+    --tag-cyan-bg: #083344;     --tag-cyan-text: #67e8f9;
+    --tag-sky-bg: #172554;      --tag-sky-text: #93c5fd;
+    --tag-indigo-bg: #1e1b4b;   --tag-indigo-text: #a5b4fc;
+    --tag-teal-bg: #042f2e;     --tag-teal-text: #5eead4;
+  }
+}
+/* Dark mode -- manual override: the toggle button sets this explicitly
+   (persisted in localStorage), regardless of the OS/browser preference. */
+:root[data-theme="dark"] {
+  --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+  --blue: #60a5fa; --danger: #f87171;
+  --ink-bg: #475569;
+  --bg-subtle: #243344;
+  --muted-light: #475569;
+  --border-strong: #64748b;
+  --blue-strong: #60a5fa;
+  --slate: #cbd5e1;
+  --slate-strong: #94a3b8;
+  --status-ok: #4ade80;
+  --status-partial: #fbbf24;
+  --shadow-sm: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+  --shadow-chip: 0 1px 3px rgba(0,0,0,0.4);
+  --modal-backdrop: rgba(0,0,0,0.6);
+  --focus-ring: rgba(96,165,250,0.25);
+  --port-hl-start: rgba(96,165,250,0.4);
+  --port-hl-end: rgba(96,165,250,0.16);
+  --tag-red-bg: #450a0a;      --tag-red-text: #fca5a5;
+  --tag-green-bg: #052e16;    --tag-green-text: #86efac;
+  --tag-orange-bg: #431407;   --tag-orange-text: #fdba74;
+  --tag-yellow-bg: #422006;   --tag-yellow-text: #fde047;
+  --tag-violet-bg: #2e1065;   --tag-violet-text: #c4b5fd;
+  --tag-purple-bg: #3b0764;   --tag-purple-text: #d8b4fe;
+  --tag-magenta-bg: #4a044e;  --tag-magenta-text: #f0abfc;
+  --tag-cyan-bg: #083344;     --tag-cyan-text: #67e8f9;
+  --tag-sky-bg: #172554;      --tag-sky-text: #93c5fd;
+  --tag-indigo-bg: #1e1b4b;   --tag-indigo-text: #a5b4fc;
+  --tag-teal-bg: #042f2e;     --tag-teal-text: #5eead4;
+}
+
+/* Theme toggle button -- see app.js initThemeToggle()/toggleTheme(). A
+   small icon button placed in the topbar's account-box next to the
+   other account actions. */
+.theme-toggle { font-size:16px; line-height:1; padding:6px 10px; }
+.theme-toggle .theme-icon-dark { display:none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .theme-icon-light { display:none; }
+  :root:not([data-theme="light"]) .theme-toggle .theme-icon-dark { display:inline; }
+}
+:root[data-theme="dark"] .theme-toggle .theme-icon-light { display:none; }
+:root[data-theme="dark"] .theme-toggle .theme-icon-dark { display:inline; }
 
 /* Printing (see "Print" button on a device's card). Hidden on screen;
    @media print below reveals this and strips non-paper UI. */
